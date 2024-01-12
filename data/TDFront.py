@@ -105,7 +105,7 @@ class TDFDataset:
         
         self.pos_dim = 2 # coord in x, y (disregard z); normalized to [-1,1]
         self.ang_dim = 2 # cos(theta), sin(theta), where theta is in [-pi, pi]
-        self.siz_dim = 2 # length of bounding box in x, y; normalized to [-1, 1]
+        self.siz_dim = 2 # length of bounding box in x, y; normalized to [-1, 1]    # TODO: change class dimension to super category
         self.cla_dim = len(self.object_types) # number of classes (19 for bedroom, 22 for all else)
         self.sha_dim = self.siz_dim+self.cla_dim
 
@@ -543,7 +543,7 @@ class TDFDataset:
     def gen_3dfront(self, batch_size, random_idx=None, data_partition='trainval', use_emd=True, 
                     abs_pos=True, abs_ang=True, use_floorplan=True, noise_level_stddev=0.1, angle_noise_level_stddev=np.pi/12,
                     weigh_by_class = False, within_floorplan = False, no_penetration = False, pen_siz_scale=0.92, 
-                    is_classification=False, replica= ""):
+                    is_classification=False, replica= "", use_SG = False):  # TODO: add SG-related features return
         """ Main entry point for generating data form the 3D-FRONT dataset.
 
             batch_size: number of scenes
@@ -623,8 +623,10 @@ class TDFDataset:
         # floor plan (3 representaitons): fpoc + nfpc, fpmask, fpbpn
         fpoc, nfpc, fpmask, fpbpn = None, None, None, None
         if use_floorplan: fpoc, nfpc, fpmask, fpbpn = clean_fpoc, clean_nfpc, clean_fpmask, clean_fpbpn
-
-        return input, labels, padding_mask, clean_scenepaths, fpoc, nfpc, fpmask, fpbpn
+        # TODO: write this
+        SG_info = None
+        if use_SG: pass
+        return input, labels, padding_mask, clean_scenepaths, fpoc, nfpc, fpmask, fpbpn, SG_info
 
 
 

@@ -89,6 +89,7 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
         model.train()
 
         padding_mask, fpoc, nfpc, fpmask, fpbpn = None, None, None, None, None # variable-length data, 3dfront specific
+        SG_info = None
         if data_type=="tablechair_horizontal":
             input, labels = gen_data_tablechair_horizontal_bimodal(half_batch_numscene, noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev'], 
                                                                     abs_pos=args["predict_absolute_pos"], abs_ang=args['predict_absolute_ang']) # deafult 0.25 and np.pi/4  # [half_batch_nscene, 14, 8]
@@ -97,20 +98,22 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
         elif data_type =="tablechair_shape":
             input, labels = gen_data_tablechair_shape_bimodal(half_batch_numscene, noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev']) # deafult 0.25 and np.pi/4
         elif data_type=="3dfront":
-            input, labels, padding_mask, _, fpoc, nfpc, fpmask, fpbpn = tdf.gen_3dfront(half_batch_numscene*2, data_partition='trainval', use_emd=args['use_emd'], 
+            input, labels, padding_mask, _, fpoc, nfpc, fpmask, fpbpn, SG_info = tdf.gen_3dfront(half_batch_numscene*2, data_partition='trainval', use_emd=args['use_emd'], 
                                                                                         abs_pos=args["predict_absolute_pos"], abs_ang=args["predict_absolute_ang"], use_floorplan=args["use_floorplan"],
                                                                                         noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev'], pen_siz_scale=pen_siz_scale,
-                                                                                        weigh_by_class = args['train_weigh_by_class'], within_floorplan = args['train_within_floorplan'], no_penetration = args['train_no_penetration'])
+                                                                                        weigh_by_class = args['train_weigh_by_class'], within_floorplan = args['train_within_floorplan'], no_penetration = args['train_no_penetration'],
+                                                                                        use_SG = args["use_SG"])
             padding_mask = torch.tensor(padding_mask).to(device) # boolean 
             if args['use_floorplan']:
                 if args['floorplan_encoder_type'] == "pointnet":  fpoc, nfpc, fpmask, fpbpn = torch.tensor(fpoc).float().to(device), torch.tensor(nfpc).int().to(device), None, None
                 elif args['floorplan_encoder_type'] == "resnet":  fpoc, nfpc, fpmask, fpbpn = None, None, torch.tensor(fpmask).float().to(device), None
                 elif args['floorplan_encoder_type'] == "pointnet_simple": fpoc, nfpc, fpmask, fpbpn = None, None, None, torch.tensor(fpbpn).float().to(device)
-
+            if args['use_SG']:
+                SG_info = torch.tensor(SG_info).float().to(device)  # one hot sequences TODO: check .float() or not
         input, labels = torch.tensor(input).float().to(device), torch.tensor(labels).float().to(device)
 
         if args['model_type'] =="Transformer":
-            pred = model(input, padding_mask, device, fpoc=fpoc, nfpc=nfpc, fpmask=fpmask, fpbpn=fpbpn)  # padding_mask: [batch_size, seq_len=maxnumobj]
+            pred = model(input, padding_mask, device, fpoc=fpoc, nfpc=nfpc, fpmask=fpmask, fpbpn=fpbpn, SG_info = SG_info)  # padding_mask: [batch_size, seq_len=maxnumobj]
         else:
             pred = model(input) # B, N, dim
         loss = loss_fn(pred, labels)
@@ -124,6 +127,7 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
             with torch.no_grad():
                 model.eval()
                 val_padding_mask, val_fpoc, val_nfpc, val_fpmask, val_fpbpn = None, None, None, None, None # variable-length data, 3dfront specific
+                val_SG_info = None
                 if data_type=="tablechair_horizontal":
                     val_input, val_labels = gen_data_tablechair_horizontal_bimodal(half_batch_numscene, noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev'],
                                                                                    abs_pos=args["predict_absolute_pos"], abs_ang=args['predict_absolute_ang']) # deafult 0.25 and np.pi/4  # [half_batch_nscene, 14, 8]) 
@@ -132,20 +136,22 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
                 elif data_type =="tablechair_shape":
                     val_input, val_labels = gen_data_tablechair_shape_bimodal(half_batch_numscene, noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev']) # deafult 0.25 and np.pi/4
                 elif data_type=="3dfront":
-                    val_input, val_labels, val_padding_mask, _, val_fpoc, val_nfpc, val_fpmask, val_fpbpn = tdf.gen_3dfront(half_batch_numscene*2, data_partition='test', use_emd=args['use_emd'], 
+                    val_input, val_labels, val_padding_mask, _, val_fpoc, val_nfpc, val_fpmask, val_fpbpn, val_SG_info = tdf.gen_3dfront(half_batch_numscene*2, data_partition='test', use_emd=args['use_emd'], 
                                                                                                                             abs_pos=args["predict_absolute_pos"], abs_ang=args["predict_absolute_ang"], use_floorplan=args["use_floorplan"],
                                                                                                                             noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev'],  pen_siz_scale=pen_siz_scale,
-                                                                                                                            weigh_by_class = args['train_weigh_by_class'], within_floorplan = args['train_within_floorplan'], no_penetration = args['train_no_penetration'])
+                                                                                                                            weigh_by_class = args['train_weigh_by_class'], within_floorplan = args['train_within_floorplan'], no_penetration = args['train_no_penetration'],
+                                                                                                                            use_SG=args['use_SG'])
                     val_padding_mask = torch.tensor(val_padding_mask).to(device) # boolean
                     if args["use_floorplan"]: 
                         if args['floorplan_encoder_type'] == "pointnet":  val_fpoc, val_nfpc, val_fpmask, val_fpbpn = torch.tensor(val_fpoc).float().to(device), torch.tensor(val_nfpc).int().to(device), None, None
                         elif args['floorplan_encoder_type'] == "resnet":  val_fpoc, val_nfpc, val_fpmask, val_fpbpn = None, None, torch.tensor(val_fpmask).float().to(device), None
                         elif args['floorplan_encoder_type'] == "pointnet_simple": val_fpoc, val_nfpc, val_fpmask, val_fpbpn = None, None, None, torch.tensor(val_fpbpn).float().to(device)
-
+                    if args["use_SG"]:
+                        val_SG_info = torch.tensor(val_SG_info).float().to(device)  # TODO: check .float() or not
                 val_input, val_labels = torch.tensor(val_input).float().to(device), torch.tensor(val_labels).float().to(device)
                 
                 if args['model_type'] == "Transformer":
-                    val_pred = model(val_input, val_padding_mask, device, fpoc=val_fpoc, nfpc=val_nfpc, fpmask=val_fpmask, fpbpn=val_fpbpn)  # val_padding_mask: [batch_size, seq_len=maxnumobj]
+                    val_pred = model(val_input, val_padding_mask, device, fpoc=val_fpoc, nfpc=val_nfpc, fpmask=val_fpmask, fpbpn=val_fpbpn, SG_info = val_SG_info)  # val_padding_mask: [batch_size, seq_len=maxnumobj]
                 else:
                     val_pred = model(val_input) # B, N, dim
                 val_loss = loss_fn(val_pred, val_labels)
@@ -187,7 +193,7 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
 
 
 
-def denoise_1scene(i, args, data_type, method, savedir, fpprefix, title, device, to_vis, scenepath=None, padding_mask=None, fpoc=None, nfpc=None, fpmask=None, fpbpn=None, steer_away=False):
+def denoise_1scene(i, args, data_type, method, savedir, fpprefix, title, device, to_vis, scenepath=None, padding_mask=None, fpoc=None, nfpc=None, fpmask=None, fpbpn=None, steer_away=False, SG_info = None):
     """Deals with actual optimization process and visualization of results.
        Optimize from generated noisy scene to clean position based on network prediction through one of the denoise_methods. In scale [-1,1].
        i: [1, numobj, pos+ang+siz+cla], input scene
@@ -210,7 +216,7 @@ def denoise_1scene(i, args, data_type, method, savedir, fpprefix, title, device,
         traj.append(torch.squeeze(i.detach().cpu()).tolist()) # add (6,2) or (14,2)
 
         if args['model_type'] == "Transformer":
-            p = model(i, padding_mask, device, fpoc=fpoc, nfpc=nfpc, fpmask=fpmask, fpbpn=fpbpn)  # padding_mask: [batch_size=1, seq_len=maxnumobj]
+            p = model(i, padding_mask, device, fpoc=fpoc, nfpc=nfpc, fpmask=fpmask, fpbpn=fpbpn, SG_info = SG_info)  # padding_mask: [batch_size=1, seq_len=maxnumobj]
         else:
             p = model(i) # (1,6,2) or (1,14,2) or (1, 14, 4)
 
@@ -277,7 +283,7 @@ def denoise_1scene(i, args, data_type, method, savedir, fpprefix, title, device,
 
 
 def denoise_batch(de_input, args, savedir="", fpprefix="", numscene=10, startidx=0, method="direct_map", data_type="3dfront", device="cpu",
-                  to_vis=True, scenepaths=None, padding_mask=None, fpoc=None, nfpc=None, fpmask=None, fpbpn=None, steer_away=False):
+                  to_vis=True, scenepaths=None, padding_mask=None, fpoc=None, nfpc=None, fpmask=None, fpbpn=None, steer_away=False, SG_info = None):
     """ Wrapper around denoise_1scene, dealing with stats and data logging.
         scenepaths, fpoc, nfpc, fpmask, fpbpn: for 3dfront 
     """
@@ -291,10 +297,11 @@ def denoise_batch(de_input, args, savedir="", fpprefix="", numscene=10, startidx
         nc=nfpc[scene_idx:scene_idx+1] if nfpc is not None else None
         m=fpmask[scene_idx:scene_idx+1] if fpmask is not None else None
         bpn=fpbpn[scene_idx:scene_idx+1] if fpbpn is not None else None
+        sg_info_ins = SG_info[scene_idx:scene_idx+1] if SG_info is not None else None
 
         traj, break_idx, pos_disp_size, ang_disp_pi_size, perobj_distmoved = denoise_1scene(de_input[scene_idx:scene_idx+1], args,data_type, method,
                                                                             savedir, f"{startidx+scene_idx}_{fpprefix}-{method}", f"{startidx+scene_idx} {fpprefix} ({method})", 
-                                                                            device, to_vis, scenepath=sp, padding_mask=pm, fpoc=oc, nfpc=nc, fpmask=m, fpbpn=bpn, steer_away=steer_away)
+                                                                            device, to_vis, scenepath=sp, padding_mask=pm, fpoc=oc, nfpc=nc, fpmask=m, fpbpn=bpn, steer_away=steer_away, SG_info = sg_info_ins)
         trajs.append(traj) # append [niter, nobj, pos+ang+siz+cla] # traj[0] is initial, traj[-1] is final
         perobj_distmoveds.append(perobj_distmoved) # append a scalar -> [nscene,]
 
@@ -336,6 +343,7 @@ def denoise_meta(args, models, model_names, numscene=10, startidx=0, use_methods
         if not os.path.exists(savedir): os.makedirs(savedir)
 
         de_padding_mask, de_scenepaths, de_fpoc, de_nfpc, de_fpmask, de_fpbpn = None, None, None, None, None, None # variable-length data, 3dfront specific
+        de_SG_info = None
         if data_type=="tablechair_horizontal":
             de_input, de_label = gen_data_tablechair_horizontal_bimodal(numscene, noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev'],
                                                                         abs_pos=args["predict_absolute_pos"], abs_ang=args['predict_absolute_ang']) # deafult 0.25 and np.pi/4  # [half_batch_nscene, 14, 8]) 
@@ -347,15 +355,18 @@ def denoise_meta(args, models, model_names, numscene=10, startidx=0, use_methods
             de_input, de_label = gen_data_tablechair_shape_bimodal(numscene, noise_level_stddev=nl, angle_noise_level_stddev=anl)
             de_input, de_label = de_input[numscene:], de_label[numscene:]
         if data_type=="3dfront":
-            de_input, de_label, de_padding_mask, de_scenepaths, de_fpoc, de_nfpc, de_fpmask, de_fpbpn = tdf.gen_3dfront(numscene, random_idx=random_idx, data_partition=data_partition, use_emd=args['use_emd'], # random_idx: same set of scenes everytime
+            de_input, de_label, de_padding_mask, de_scenepaths, de_fpoc, de_nfpc, de_fpmask, de_fpbpn, de_SG_info = tdf.gen_3dfront(numscene, random_idx=random_idx, data_partition=data_partition, use_emd=args['use_emd'], # random_idx: same set of scenes everytime
                                                                                                                         abs_pos=args["predict_absolute_pos"], abs_ang=args["predict_absolute_ang"], use_floorplan=args["use_floorplan"],
                                                                                                                         noise_level_stddev=nl, angle_noise_level_stddev=anl,
                                                                                                                         weigh_by_class = args['denoise_weigh_by_class'], within_floorplan = args['denoise_within_floorplan'], no_penetration = args['denoise_no_penetration'], 
-                                                                                                                        pen_siz_scale=pen_siz_scale, replica=args["replica"])
+                                                                                                                        pen_siz_scale=pen_siz_scale, replica=args["replica"],
+                                                                                                                        use_SG=args['use_SG'])
 
             de_padding_mask = torch.tensor(de_padding_mask).to(device) # boolean
             if args["use_floorplan"]: # models below may have any variation of encoder regardless of floorplan_encoder_type in args
                 de_fpoc, de_nfpc, de_fpmask, de_fpbpn = torch.tensor(de_fpoc).float().to(device), torch.tensor(de_nfpc).int().to(device), torch.tensor(de_fpmask).float().to(device), torch.tensor(de_fpbpn).float().to(device)
+            if args["use_SG"]:
+                de_SG_info = torch.tensor(de_SG_info).float().to(device)    # TODO: check .float() or not
         de_input, de_label = torch.tensor(de_input).float().to(device), torch.tensor(de_label).float().to(device) # [numscene*2,nobj,d] - first half is clean
         
         # Visualizing and saving scene's initial state
@@ -412,9 +423,10 @@ def denoise_meta(args, models, model_names, numscene=10, startidx=0, use_methods
                     nfpc       = None if de_nfpc is None else de_nfpc.detach().clone()
                     fpmask     = None if de_fpmask is None else de_fpmask.detach().clone()
                     fpbpn      = None if de_fpbpn is None else de_fpbpn.detach().clone()
+                    SG_info    = None if de_SG_info is None else de_SG_info.detach().clone()
                     trajs, perobj_distmoveds = denoise_batch(de_input.detach().clone(), args, savedir, mn, numscene, startidx=startidx, method=denoise_methods[method_i], data_type=data_type,
                                                  device=device, to_vis=to_vis, scenepaths=de_scenepaths, padding_mask=p_m,  
-                                                 fpoc=fpoc, nfpc=nfpc, fpmask=fpmask, fpbpn=fpbpn, steer_away = args['denoise_steer_away'])
+                                                 fpoc=fpoc, nfpc=nfpc, fpmask=fpmask, fpbpn=fpbpn, steer_away = args['denoise_steer_away'], SG_info=SG_info)
                     if data_type=="3dfront" and args["replica"]!="room_0":
                         emd2gt = dist_2_gt(trajs, de_scenepaths, tdf, use_emd=True) # trajs: normalized 
                         noise_emd2gts.append(emd2gt)
@@ -587,6 +599,7 @@ def initialize_parser():
     parser.add_argument("--livingroom_only",  type = int, default=0, help="3D-FRONT specific. livingroom specific. If 1, discard livingdiningroom.") 
     parser.add_argument("--use_emd", type = int, default=1, help="3D-FRONT specific. Earthmover's distance.") # whether to use earthmover distance assignment or original scene for noisy label
     parser.add_argument("--use_floorplan", type = int, default=1, help="3D-FRONT specific. Takes in floor plan of scene. Exact format determined by floorplan_encoder_type.")
+    parser.add_argument("--use_SG", type = int, default=0, help="3D-FRONT specific. Takes in scene graph information of scene.")
     parser.add_argument("--use_augment",  type = int, default=1, help="3D-FRONT specific. Augmentation involved creating 4 rotated versions of each scene.") # for room_type==livingroom (if true, discard livingdiningroom )
     parser.add_argument("--floorplan_encoder_type", type = str, default="pointnet_simple", choices = ["pointnet", "resnet", "pointnet_simple"],
                         help='''3D-FRONT specific.
@@ -616,6 +629,7 @@ if __name__ == "__main__":
     adjust_parameters()
 
     print_str, maxnfpoc, nfpbpn  = "", None, None # to be overriden
+    edge_d = None
     if args['data_type']=="tablechair_horizontal":
         n_obj, n_table, pos_d, ang_d, siz_d, cla_d, invsha_d = 14, 2, 2, 2, 2, 2, 0
     elif args['data_type']=="circle":
@@ -626,8 +640,10 @@ if __name__ == "__main__":
     elif args['data_type'] =="tablechair_shape":
         n_obj, n_table, pos_d, ang_d, siz_d, cla_d, invsha_d = 7, 1, 2, 2, 2, 2, 128
     elif args['data_type']=="3dfront":
+        # TODO: add dimension for Graph relation data
         tdf = TDFDataset(args['room_type'], use_augment=args['use_augment'], livingroom_only=args['livingroom_only'])
         n_obj, pos_d, ang_d, siz_d, cla_d, invsha_d, maxnfpoc, nfpbpn = tdf.maxnobj, tdf.pos_dim, tdf.ang_dim, tdf.siz_dim, tdf.cla_dim, 0, tdf.maxnfpoc, tdf.nfpbpn # shape = size+class
+        edge_d = tdf.edge_dim
         print_str = f"room_type={args['room_type']}, no lamp"
     else:  # rect, rect_trans
         n_obj, pos_d, ang_d,  siz_d, cla_d, invsha_d = 6, 2, 0, 0, 0, 0
@@ -649,15 +665,17 @@ if __name__ == "__main__":
         model = PointTransformer(input_dim=input_d, out_dim=out_d, device=args['device'])
     elif args['model_type'] == "Transformer":
         transformer_use_floorplan = (args['use_floorplan'] and args['data_type']=="3dfront")
+        transformer_use_SG = (args['use_SG'] and args['data_type']=="3dfront")
         transformer_config = {"pos_dim": pos_d, "ang_dim": ang_d, "siz_dim": siz_d, "cla_dim": cla_d, 
                               "maxnfpoc": maxnfpoc, "nfpbpn": nfpbpn,
                               "invsha_d": invsha_d, "use_invariant_shape": (invsha_d>0),
                               "ang_initial_d": 128, "siz_initial_unit": None, "cla_initial_unit": [128, 128],
                                "invsha_initial_unit": [128, 128], "all_initial_unit": [512, 512], "final_lin_unit": [256, out_d], 
                                "use_two_branch": args['use_two_branch'], "pe_numfreq": 32, "pe_end": 128, 
-                               "use_floorplan": transformer_use_floorplan, "floorplan_encoder_type": args['floorplan_encoder_type']}
+                               "use_floorplan": transformer_use_floorplan, "floorplan_encoder_type": args['floorplan_encoder_type'],
+                               "use_SG": transformer_use_SG, "edge_dim": edge_d, "edge_initial_unit": [128, 128], "all_initial_SG_unit": [512, 512]} # TODO: check settings on this line
         log(f"args['model_type']={args['model_type']}: {transformer_config}\n")
-        model = TransformerWrapper(**transformer_config)
+        model = TransformerWrapper(**transformer_config)    # TODO: check how to add positional encodings
         
     if gpucount > 1: model = torch.nn.DataParallel(model)
 

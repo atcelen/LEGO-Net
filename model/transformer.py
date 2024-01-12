@@ -106,7 +106,7 @@ class TransformerWrapper(nn.Module):
                  ang_initial_d = 128, siz_initial_unit = [64, 16], cla_initial_unit = [64], invsha_initial_unit = [128,128],
                  all_initial_unit = [512], final_lin_unit = [256, 4], use_two_branch = False,
                  pe_numfreq= 16, pe_end=128, use_floorplan = False, floorplan_encoder_type = 'pointnet',
-                 
+                 use_SG = False, edge_dim = 0, edge_initial_unit = [128, 128], all_initial_SG_unit = [512, 512],
                  nhead= 8, num_encoder_layers= 6, dim_feedforward= 2048, dropout: float = 0.1, layer_norm_eps: float = 1e-5, batch_first: bool = True):
         """ * For each object's input: pos, ang - PE; siz - either PE or MLP; cla - MLP. 
             * Then the result from these 4 are concatenated (B x nobj x total_d) and passed into MLP all_initial. 
@@ -125,9 +125,14 @@ class TransformerWrapper(nn.Module):
         transformer_input_d = all_initial_unit[-1]
 
         self.use_floorplan, self.floorplan_encoder_type, self.use_two_branch, self.use_invariant_shape = use_floorplan, floorplan_encoder_type, use_two_branch, use_invariant_shape
-        if use_floorplan: all_initial_unit[-1]-=1 
+        if use_floorplan: 
+            all_initial_unit[-1]-=1 
             # dmodel to transformer must be divisible by numhead: save space for flag distinguishing floor plan token from obj token
-
+        self.use_SG = use_SG
+        self.edge_dim = edge_dim
+        if use_SG:
+            all_initial_unit[-1]-=1 # TODO: check this setting later, set 0, 1, 2 (do not need to -1) or 0, 1 format (need to -1)
+            all_initial_SG_unit[-1] = all_initial_unit[-1]
         self.activation = torch.nn.LeakyReLU() # ReLU()
         self.pe = FixedPositionalEncoding(pe_numfreq, pe_end) 
         
@@ -172,18 +177,38 @@ class TransformerWrapper(nn.Module):
         # 2b. floor plan
         self.floorplan_encoder = None
         if self.use_floorplan: # self.floorplan = PointNetClass_Simple(input_dim=max, out_dim)
+            output_shape = transformer_input_d-1
+            if self.use_SG:
+                output_shape = transformer_input_d-2
             if self.floorplan_encoder_type == 'pointnet':
                 corner_feat_units = [self.pos_dim, 64, 128] # 2 layers
                 line_feat_units = [corner_feat_units[-1]*2, 512, 1024]  # 2 layers
-                fp_units = [line_feat_units[-1], 512, transformer_input_d-1] # 1024, 511/more (1 layer)
+                fp_units = [line_feat_units[-1], 512, output_shape] # 1024, 511/more (1 layer)
+                # fp_units = [line_feat_units[-1], 512, transformer_input_d-1] # 1024, 511/more (1 layer)
 
                 self.floorplan_encoder = PointNet_Line(torch.nn.LeakyReLU(), maxnfpoc=maxnfpoc, corner_feat_units=corner_feat_units, line_feat_units=line_feat_units, fp_units=fp_units)
         
             elif self.floorplan_encoder_type == 'resnet':
-                self.floorplan_encoder = ResNet18(freeze_bn=False, in_dim=3, out_dim=transformer_input_d-1)
+                self.floorplan_encoder = ResNet18(freeze_bn=False, in_dim=3, out_dim=output_shape)
+                # self.floorplan_encoder = ResNet18(freeze_bn=False, in_dim=3, out_dim=transformer_input_d-1)
 
             elif self.floorplan_encoder_type == 'pointnet_simple':
-                self.floorplan_encoder = PointNet_Point(torch.nn.LeakyReLU(), nfpbpn=nfpbpn, feat_units=[4, 64, 64, 512, transformer_input_d-1])
+                self.floorplan_encoder = PointNet_Point(torch.nn.LeakyReLU(), nfpbpn=nfpbpn, feat_units=[4, 64, 64, 512, output_shape])
+                # self.floorplan_encoder = PointNet_Point(torch.nn.LeakyReLU(), nfpbpn=nfpbpn, feat_units=[4, 64, 64, 512, transformer_input_d-1])
+
+        # 2c. scene graph edges
+        if self.use_SG:
+            # NOTE: for class embedding, uses self.cla_initial; for edge embedding, use a new MLP
+            self.edge_initial = [torch.nn.Linear(edge_dim, edge_initial_unit[0])]
+            for i in range(1, len(edge_initial_unit)):
+                self.edge_initial.append(torch.nn.Linear(edge_initial_unit[i-1], edge_initial_unit[i]))
+            self.edge_initial = torch.nn.ModuleList(self.edge_initial)
+            initial_SG_feat_input_d = cla_initial_unit[-1] * 2 + edge_initial_unit[-1]
+            self.all_initial_SG = [torch.nn.Linear(initial_SG_feat_input_d, all_initial_SG_unit[0])]
+            for i in range(1, len(all_initial_SG_unit)):
+                self.all_initial_SG.append(torch.nn.Linear(all_initial_SG_unit[i-1], all_initial_SG_unit[i]))
+            self.all_initial_SG = torch.nn.ModuleList(self.all_initial_SG)
+
 
         # 3. (B x nobj(+1) x transformer_input_d) ->  (B x nobj(+1) x transformer_input_d) 
         self.transformer = Transformer(transformer_input_d, nhead, num_encoder_layers, dim_feedforward, dropout, layer_norm_eps, batch_first)
@@ -208,7 +233,7 @@ class TransformerWrapper(nn.Module):
 
 
 
-    def forward(self, x, padding_mask, device, fpoc=None, nfpc=None, fpmask=None, fpbpn=None):
+    def forward(self, x, padding_mask, device, fpoc=None, nfpc=None, fpmask=None, fpbpn=None, SG_info = None):
         """ x           : [batch_size, maxnumobj, pos+ang+siz+cla]
             padding_mask: [batch_size, maxnumobj], for nn.TransformerEncoder (False: not masked, True=masked, not attended to)
             fpoc        : [batch_size, maxnfpoc, pos=2], with padded 0 beyond num_floor_plan_ordered_corners for each scene, for 'pointnet'
@@ -255,6 +280,8 @@ class TransformerWrapper(nn.Module):
             initial_feat = self.activation(self.all_initial[i](initial_feat)) 
         initial_feat = self.all_initial[-1](initial_feat) # [B, nobj, 512(-1)]
 
+        num_objects = initial_feat.shape[1]
+
         # 2b. floor plan: input -> (B x 1 x transformer_input_d=512(-1+1) )
         # Add floor plan as last obj along dim 1 + add binary flag as last col along dim 2 + add 1 entry to padding mask for floor plan object
         if self.use_floorplan:
@@ -278,12 +305,50 @@ class TransformerWrapper(nn.Module):
             # mask for transformer (False: not masked, True=masked/not attended to)
             padding_mask = torch.cat((padding_mask, torch.zeros(initial_feat.shape[0],1).to(device)), dim=1).bool()# [batch_size, maxnumobj+1]
         
+        # 2.c scene graph: input
+        if self.use_SG:
+            num_edges = SG_info.shape[1]
+            obj_source_feat = SG_info[:, :, :self.cla_dim]
+            edge_feat = SG_info[:, :, self.cla_dim : self.cla_dim + self.edge_dim]
+            obj_target_feat = SG_info[:, :, self.cla_dim + self.edge_dim : ]
+            # class embedding transformation
+            for i in range(len(self.cla_initial)-1):
+                obj_source_feat = self.activation(self.cla_initial[i](obj_source_feat)) # [B, nedge, cla_feat_d]
+            obj_source_feat = self.cla_initial[-1](obj_source_feat)
+
+            for i in range(len(self.cla_initial)-1):
+                obj_target_feat = self.activation(self.cla_initial[i](obj_target_feat)) # [B, nedge, cla_feat_d]
+            obj_target_feat = self.cla_initial[-1](obj_target_feat)
+
+            for i in range(len(self.edge_initial)-1):
+                edge_feat = self.activation(self.edge_initial[i](edge_feat)) # [B, nedge, cla_feat_d]
+            edge_feat = self.edge_initial[-1](edge_feat)
+
+            initial_feat_SG = torch.cat([obj_source_feat, edge_feat, obj_target_feat], dim=-1)
+            for i in range(len(self.all_initial_SG)-1):
+                initial_feat_SG = self.activation(self.all_initial_SG[i](initial_feat_SG)) 
+            initial_feat_SG = self.all_initial_SG[-1](initial_feat_SG) # [B, nedge, 512(-2)]
+
+            # Prepare overall input to transformer
+            if self.use_floorplan:
+                flags_floorplan = torch.zeros(initial_feat_SG.shape[0], initial_feat_SG.shape[1], 1).to(device)
+                initial_feat_SG = torch.cat([initial_feat_SG, flags_floorplan], dim = 1)
+            ini_feat_orig_dim2 = initial_feat.shape[1]
+            initial_feat = torch.cat([initial_feat, initial_feat_SG], dim=1) # [B, nobj+1 + nedges, transformer_input_d-1]
+            flag = torch.zeros(initial_feat.shape[0], initial_feat.shape[1], 1).to(device) # [B, nobj+1, 1], is_floorplan 
+            # NOTE: flag always apended at the end, with or without shape feature
+            flag[:, ini_feat_orig_dim2:, 0] = 1 # last row of every scene is 1
+            initial_feat = torch.cat((initial_feat, flag), dim=-1) # [B, nobj+1, transformer_input_d-1+1 = transformer_input_d]
+            
+            # mask for transformer (False: not masked, True=masked/not attended to)
+            padding_mask = torch.cat((padding_mask, torch.zeros(initial_feat.shape[0], num_edges).to(device)), dim=1).bool()# [batch_size, maxnumobj+1 + edges]
 
         # 3. (B x nobj(+1) x transformer_input_d) ->  (B x nobj(+1) x transformer_input_d) 
         trans_out = self.transformer(initial_feat, padding_mask=padding_mask)
 
         # 4. (B x nobj(+1) x transformer_input_d) -> (B x nobj x out_dim) 
-        if self.use_floorplan: trans_out = trans_out[:,:-1,:] # (B x nobj x transformer_input_d)
+        trans_out = trans_out[:,:num_objects,:] # (B x nobj x transformer_input_d)
+        # if self.use_floorplan: trans_out = trans_out[:,:-1,:] # (B x nobj x transformer_input_d)
         
         if not self.use_two_branch:
             for i in range(len(self.final_lin)-1):
