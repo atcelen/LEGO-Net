@@ -106,7 +106,7 @@ class TransformerWrapper(nn.Module):
                  ang_initial_d = 128, siz_initial_unit = [64, 16], cla_initial_unit = [64], invsha_initial_unit = [128,128],
                  all_initial_unit = [512], final_lin_unit = [256, 4], use_two_branch = False,
                  pe_numfreq= 16, pe_end=128, use_floorplan = False, floorplan_encoder_type = 'pointnet',
-                 use_SG = False, edge_dim = 0, edge_initial_unit = [128, 128], all_initial_SG_unit = [512, 512],
+                 use_SG = False, edge_dim = 0, edge_initial_unit = [128, 128], all_initial_SG_unit = [512, 512], max_nobj = 0,
                  nhead= 8, num_encoder_layers= 6, dim_feedforward= 2048, dropout: float = 0.1, layer_norm_eps: float = 1e-5, batch_first: bool = True):
         """ * For each object's input: pos, ang - PE; siz - either PE or MLP; cla - MLP. 
             * Then the result from these 4 are concatenated (B x nobj x total_d) and passed into MLP all_initial. 
@@ -120,6 +120,7 @@ class TransformerWrapper(nn.Module):
             transformer_input_d: original d_model=512, feat_d for each obj, taken in by the transformer and outputted by the transformer. 
         """
         super().__init__()
+        self.max_nobj = max_nobj
         self.pos_dim, self.ang_dim, self.siz_dim, self.cla_dim = pos_dim, ang_dim, siz_dim, cla_dim
         all_initial_unit = [ e for e in all_initial_unit] # make copy as changed below
         transformer_input_d = all_initial_unit[-1]
@@ -133,6 +134,7 @@ class TransformerWrapper(nn.Module):
         if use_SG:
             all_initial_unit[-1]-=1 # TODO: check this setting later, set 0, 1, 2 (do not need to -1) or 0, 1 format (need to -1)
             all_initial_SG_unit[-1] = all_initial_unit[-1]
+        self.all_initial_unit_last = all_initial_unit[-1]
         self.activation = torch.nn.LeakyReLU() # ReLU()
         self.pe = FixedPositionalEncoding(pe_numfreq, pe_end) 
         
@@ -203,7 +205,7 @@ class TransformerWrapper(nn.Module):
             for i in range(1, len(edge_initial_unit)):
                 self.edge_initial.append(torch.nn.Linear(edge_initial_unit[i-1], edge_initial_unit[i]))
             self.edge_initial = torch.nn.ModuleList(self.edge_initial)
-            initial_SG_feat_input_d = cla_initial_unit[-1] * 2 + edge_initial_unit[-1]
+            initial_SG_feat_input_d = self.all_initial_unit_last * 2 + edge_initial_unit[-1]
             self.all_initial_SG = [torch.nn.Linear(initial_SG_feat_input_d, all_initial_SG_unit[0])]
             for i in range(1, len(all_initial_SG_unit)):
                 self.all_initial_SG.append(torch.nn.Linear(all_initial_SG_unit[i-1], all_initial_SG_unit[i]))
@@ -308,18 +310,24 @@ class TransformerWrapper(nn.Module):
         # 2.c scene graph: input
         if self.use_SG:
             num_edges = SG_info.shape[1]
-            obj_source_feat = SG_info[:, :, :self.cla_dim]
-            edge_feat = SG_info[:, :, self.cla_dim : self.cla_dim + self.edge_dim]
-            obj_target_feat = SG_info[:, :, self.cla_dim + self.edge_dim : ]
+            obj_source_onehot = SG_info[:, :, :self.max_nobj]    # [batch_size, nedges, max_nobj], object index one hot
+            edge_feat = SG_info[:, :, self.max_nobj : self.max_nobj + self.edge_dim]    # [batch_size, nedges, number of edge types], object index one hot
+            obj_target_onehot = SG_info[:, :, self.max_nobj + self.edge_dim : ]
+
+            obj_source_index = torch.nonzero(obj_source_onehot) # TODO: check here, expecially dimensions and output specifics
+            obj_source_feat = initial_feat[:, :self.max_nobj, :self.all_initial_unit_last][obj_source_index]
+            obj_target_index = torch.nonzero(obj_target_onehot)
+            obj_target_feat = initial_feat[:, :self.max_nobj, :self.all_initial_unit_last][obj_target_index]
             # class embedding transformation
-            for i in range(len(self.cla_initial)-1):
-                obj_source_feat = self.activation(self.cla_initial[i](obj_source_feat)) # [B, nedge, cla_feat_d]
-            obj_source_feat = self.cla_initial[-1](obj_source_feat)
+            # for i in range(len(self.cla_initial)-1):
+            #     obj_source_feat = self.activation(self.cla_initial[i](obj_source_feat)) # [B, nedge, cla_feat_d]
+            # obj_source_feat = self.cla_initial[-1](obj_source_feat)
 
-            for i in range(len(self.cla_initial)-1):
-                obj_target_feat = self.activation(self.cla_initial[i](obj_target_feat)) # [B, nedge, cla_feat_d]
-            obj_target_feat = self.cla_initial[-1](obj_target_feat)
+            # for i in range(len(self.cla_initial)-1):
+            #     obj_target_feat = self.activation(self.cla_initial[i](obj_target_feat)) # [B, nedge, cla_feat_d]
+            # obj_target_feat = self.cla_initial[-1](obj_target_feat)
 
+            # edge embedding transformation
             for i in range(len(self.edge_initial)-1):
                 edge_feat = self.activation(self.edge_initial[i](edge_feat)) # [B, nedge, cla_feat_d]
             edge_feat = self.edge_initial[-1](edge_feat)

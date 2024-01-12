@@ -673,7 +673,7 @@ if __name__ == "__main__":
                                "invsha_initial_unit": [128, 128], "all_initial_unit": [512, 512], "final_lin_unit": [256, out_d], 
                                "use_two_branch": args['use_two_branch'], "pe_numfreq": 32, "pe_end": 128, 
                                "use_floorplan": transformer_use_floorplan, "floorplan_encoder_type": args['floorplan_encoder_type'],
-                               "use_SG": transformer_use_SG, "edge_dim": edge_d, "edge_initial_unit": [128, 128], "all_initial_SG_unit": [512, 512]} # TODO: check settings on this line
+                               "use_SG": transformer_use_SG, "edge_dim": edge_d, "edge_initial_unit": [512, 510], "all_initial_SG_unit": [512, 512], "max_nobj": n_obj} # TODO: check settings on this line
         log(f"args['model_type']={args['model_type']}: {transformer_config}\n")
         model = TransformerWrapper(**transformer_config)    # TODO: check how to add positional encodings
         
