@@ -113,6 +113,8 @@ class TDFDataset:
 
         self.room_size = room_info["room_size"][self.room_type] #[rs_x, rs_y, rs_z]
 
+        self.edge_dim = 5
+
 
     ## HELPER FUNCTION: agnostic of specific dataset configs
     @staticmethod
@@ -625,7 +627,17 @@ class TDFDataset:
         if use_floorplan: fpoc, nfpc, fpmask, fpbpn = clean_fpoc, clean_nfpc, clean_fpmask, clean_fpbpn
         # TODO: write this
         SG_info = None
-        if use_SG: pass
+        if use_SG: 
+            # Here is simple test data
+            SG_info = torch.zeros((input.shape[0], 2, self.maxnobj + self.edge_dim + self.maxnobj))
+            SG_info[:, 0, 0] = 1
+            SG_info[:, 0, self.maxnobj + 3] = 1
+            SG_info[:, 0, self.maxnobj + self.edge_dim + 1] = 1
+            SG_info[:, 1, 1] = 1
+            SG_info[:, 1, self.maxnobj + 2] = 1
+            SG_info[:, 1, self.maxnobj + self.edge_dim] = 1
+            
+            # pass
         return input, labels, padding_mask, clean_scenepaths, fpoc, nfpc, fpmask, fpbpn, SG_info
 
 

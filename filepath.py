@@ -1,7 +1,7 @@
 import os
 
 ### Top-most directory path
-home_dir  = ""
+home_dir  = "/cluster/home/guohan/Project"
 
 
 ### 3D-FRONT dataset (optional)

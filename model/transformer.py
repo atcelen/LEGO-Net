@@ -134,6 +134,7 @@ class TransformerWrapper(nn.Module):
         if use_SG:
             all_initial_unit[-1]-=1 # TODO: check this setting later, set 0, 1, 2 (do not need to -1) or 0, 1 format (need to -1)
             all_initial_SG_unit[-1] = all_initial_unit[-1]
+            # edge_initial_unit[-1] = all_initial_unit[-1]    # TODO: check this setting
         self.all_initial_unit_last = all_initial_unit[-1]
         self.activation = torch.nn.LeakyReLU() # ReLU()
         self.pe = FixedPositionalEncoding(pe_numfreq, pe_end) 
@@ -210,7 +211,8 @@ class TransformerWrapper(nn.Module):
             for i in range(1, len(all_initial_SG_unit)):
                 self.all_initial_SG.append(torch.nn.Linear(all_initial_SG_unit[i-1], all_initial_SG_unit[i]))
             self.all_initial_SG = torch.nn.ModuleList(self.all_initial_SG)
-
+            # print("edge initial network: ", self.edge_initial)
+            # print("all initial SG network: ", self.all_initial_SG)
 
         # 3. (B x nobj(+1) x transformer_input_d) ->  (B x nobj(+1) x transformer_input_d) 
         self.transformer = Transformer(transformer_input_d, nhead, num_encoder_layers, dim_feedforward, dropout, layer_norm_eps, batch_first)
@@ -313,11 +315,17 @@ class TransformerWrapper(nn.Module):
             obj_source_onehot = SG_info[:, :, :self.max_nobj]    # [batch_size, nedges, max_nobj], object index one hot
             edge_feat = SG_info[:, :, self.max_nobj : self.max_nobj + self.edge_dim]    # [batch_size, nedges, number of edge types], object index one hot
             obj_target_onehot = SG_info[:, :, self.max_nobj + self.edge_dim : ]
+            # print("max_nobj: ", self.max_nobj, " num_edges: ", num_edges, " obj_source_onehot: ", obj_source_onehot.size(), " edge_feat: ", edge_feat.size(), " obj_target_onehot: ", obj_target_onehot.size())
+            # print("initial_feat: ", initial_feat.size())
 
-            obj_source_index = torch.nonzero(obj_source_onehot) # TODO: check here, expecially dimensions and output specifics
-            obj_source_feat = initial_feat[:, :self.max_nobj, :self.all_initial_unit_last][obj_source_index]
-            obj_target_index = torch.nonzero(obj_target_onehot)
-            obj_target_feat = initial_feat[:, :self.max_nobj, :self.all_initial_unit_last][obj_target_index]
+            obj_source_index = torch.argmax(obj_source_onehot, dim=-1) # TODO: check here, expecially dimensions and output specifics
+            obj_source_feat = torch.gather(initial_feat[:,:self.max_nobj, :self.all_initial_unit_last], 1, obj_source_index.unsqueeze(-1).expand(-1, -1, self.all_initial_unit_last))
+            
+            obj_target_index = torch.argmax(obj_target_onehot, dim=-1)
+            obj_target_feat = torch.gather(initial_feat[:,:self.max_nobj, :self.all_initial_unit_last], 1, obj_target_index.unsqueeze(-1).expand(-1, -1, self.all_initial_unit_last))
+            # print("obj_source_index: ", obj_source_index.size(), " obj_target_index: ", obj_target_index.size())
+            # print("obj_source_feat: ", obj_source_feat.size(), " obj_target_feat: ", obj_target_feat.size())
+            # print("obj_source_feat[0]: ", obj_source_feat[0], " obj_target_feat[0]: ", obj_target_feat[0])
             # class embedding transformation
             # for i in range(len(self.cla_initial)-1):
             #     obj_source_feat = self.activation(self.cla_initial[i](obj_source_feat)) # [B, nedge, cla_feat_d]
@@ -333,24 +341,28 @@ class TransformerWrapper(nn.Module):
             edge_feat = self.edge_initial[-1](edge_feat)
 
             initial_feat_SG = torch.cat([obj_source_feat, edge_feat, obj_target_feat], dim=-1)
+            # print("obj_source_feat: ", obj_source_feat.size(), " edge_feat: ", edge_feat.size(), " obj_target_feat: ", obj_target_feat.size())
             for i in range(len(self.all_initial_SG)-1):
                 initial_feat_SG = self.activation(self.all_initial_SG[i](initial_feat_SG)) 
             initial_feat_SG = self.all_initial_SG[-1](initial_feat_SG) # [B, nedge, 512(-2)]
-
+            # print("after all_initial_sg: ", initial_feat_SG.size())
             # Prepare overall input to transformer
             if self.use_floorplan:
                 flags_floorplan = torch.zeros(initial_feat_SG.shape[0], initial_feat_SG.shape[1], 1).to(device)
-                initial_feat_SG = torch.cat([initial_feat_SG, flags_floorplan], dim = 1)
+                initial_feat_SG = torch.cat([initial_feat_SG, flags_floorplan], dim = -1)
+                # print("after floorplan ini SG dim: ", initial_feat_SG.size())
             ini_feat_orig_dim2 = initial_feat.shape[1]
             initial_feat = torch.cat([initial_feat, initial_feat_SG], dim=1) # [B, nobj+1 + nedges, transformer_input_d-1]
+            # print("inital_feat before adding SG flag: ", initial_feat.size())
             flag = torch.zeros(initial_feat.shape[0], initial_feat.shape[1], 1).to(device) # [B, nobj+1, 1], is_floorplan 
             # NOTE: flag always apended at the end, with or without shape feature
             flag[:, ini_feat_orig_dim2:, 0] = 1 # last row of every scene is 1
             initial_feat = torch.cat((initial_feat, flag), dim=-1) # [B, nobj+1, transformer_input_d-1+1 = transformer_input_d]
-            
+            # print("flag: ", initial_feat[0, :, -2:])
+            # print("final initial feat: ", initial_feat.size())
             # mask for transformer (False: not masked, True=masked/not attended to)
             padding_mask = torch.cat((padding_mask, torch.zeros(initial_feat.shape[0], num_edges).to(device)), dim=1).bool()# [batch_size, maxnumobj+1 + edges]
-
+            # print("padding mask: ", padding_mask[0])
         # 3. (B x nobj(+1) x transformer_input_d) ->  (B x nobj(+1) x transformer_input_d) 
         trans_out = self.transformer(initial_feat, padding_mask=padding_mask)
 
