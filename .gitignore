@@ -1,1 +1,6 @@
-__pycache__/
+/3DFRONT_65347
+/ConDor_torch/preprocessed_condor_output
+*.pt
+/__MACOSX
+**/__pycache__/
+*.zip
