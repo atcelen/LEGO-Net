@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 import matplotlib.transforms as mt
 import cv2 as cv
 
-from data.utils import *
-from data.distance import *
+from utils import *
+from distance import *
 
 from filepath import *
 
@@ -36,7 +36,9 @@ room_info = {
     },
     "maxnfpoc":{ # maximum number of floor plan ordered corners
         "bedroom": [4,25],
-        "livingroom": [1,51] # 39 rooms above 35
+        "livingroom": [1,51], # 39 rooms above 35
+        "library": [4,25],
+        "diningroom": [4,25]
     }
 }
 
@@ -93,7 +95,7 @@ class TDFDataset:
             if os.path.exists(os.path.join(self.scene_dir, "data_test_ctr.npz")):
                 self.data_test = np.load( os.path.join(self.scene_dir, "data_test_ctr.npz"), allow_pickle=True)
 
-        with open(os.path.join(self.scene_dir, "dataset_stats_all.txt")) as f:
+        with open(os.path.join(self.scene_dir, "dataset_stats.txt")) as f:
             # Same regardless of if only living room (ctr.npz processed from boxes.npz, generated in one go from ATISS for all living+livingdiningrooms)
             # NOTE: data prepared with splits test+train+val (ATISS's preprocess_data.py)
             ds_js_all= json.loads(f.read()) 
