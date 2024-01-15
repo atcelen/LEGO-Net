@@ -9,14 +9,16 @@ from pprint import pprint
 import torch 
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
 from model.models import PointNetSeg, PointNetPlusPlus, PointNetPlusPlus_dense, PointNetPlusPlus_dense_attention, PointTransformer, TransformerWrapper
 
 from data.utils import *
-from data.tablechair_horizontal import gen_data_tablechair_horizontal_bimodal
-from data.tablechair_circle import gen_data_tablechair_circle_bimodal, ntable, nchair_min, nchair_max, maxnumobj, gen_no_table
-from data.tablechair_shape import gen_data_tablechair_shape_bimodal
+# from data.tablechair_horizontal import gen_data_tablechair_horizontal_bimodal
+# from data.tablechair_circle import gen_data_tablechair_circle_bimodal, ntable, nchair_min, nchair_max, maxnumobj, gen_no_table
+# from data.tablechair_shape import gen_data_tablechair_shape_bimodal
 from data.TDFront import TDFDataset
+from data.TDSGFront import TDSGFront
 
 from eval.denoise_res_eval import dist_2_gt
 
@@ -85,7 +87,7 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
     log(f"\n\n------------BEGINNING TRAINING [Time: {datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}] ------------")
     
     train_losses, val_losses, val_losses_epoch, min_val_loss = [], [], [], math.inf
-    for e in range(start_epoch, start_epoch+epoch): # epoch = batch
+    for e in tqdm(range(start_epoch, start_epoch+epoch)): # epoch = batch
         model.train()
 
         padding_mask, fpoc, nfpc, fpmask, fpbpn = None, None, None, None, None # variable-length data, 3dfront specific
@@ -102,7 +104,7 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
                                                                                         abs_pos=args["predict_absolute_pos"], abs_ang=args["predict_absolute_ang"], use_floorplan=args["use_floorplan"],
                                                                                         noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev'], pen_siz_scale=pen_siz_scale,
                                                                                         weigh_by_class = args['train_weigh_by_class'], within_floorplan = args['train_within_floorplan'], no_penetration = args['train_no_penetration'],
-                                                                                        use_SG = args["use_SG"])
+                                                                                        )
             padding_mask = torch.tensor(padding_mask).to(device) # boolean 
             if args['use_floorplan']:
                 if args['floorplan_encoder_type'] == "pointnet":  fpoc, nfpc, fpmask, fpbpn = torch.tensor(fpoc).float().to(device), torch.tensor(nfpc).int().to(device), None, None
@@ -140,7 +142,7 @@ def train(epoch, half_batch_numscene, args, data_type="3dfront", device="cpu"):
                                                                                                                             abs_pos=args["predict_absolute_pos"], abs_ang=args["predict_absolute_ang"], use_floorplan=args["use_floorplan"],
                                                                                                                             noise_level_stddev=args['train_pos_noise_level_stddev'], angle_noise_level_stddev=args['train_ang_noise_level_stddev'],  pen_siz_scale=pen_siz_scale,
                                                                                                                             weigh_by_class = args['train_weigh_by_class'], within_floorplan = args['train_within_floorplan'], no_penetration = args['train_no_penetration'],
-                                                                                                                            use_SG=args['use_SG'])
+                                                                                                                            )
                     val_padding_mask = torch.tensor(val_padding_mask).to(device) # boolean
                     if args["use_floorplan"]: 
                         if args['floorplan_encoder_type'] == "pointnet":  val_fpoc, val_nfpc, val_fpmask, val_fpbpn = torch.tensor(val_fpoc).float().to(device), torch.tensor(val_nfpc).int().to(device), None, None
@@ -622,7 +624,8 @@ if __name__ == "__main__":
     args["logsavedir"] = logsavedir_from_args(args)
     args["logfile"] = os.path.join(args['logsavedir'], "log.txt")
     args["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    print(f"args['device']={args['device']}")
+    
     if not os.path.exists(args['logsavedir']): os.makedirs(args['logsavedir'])
     gpucount = torch.cuda.device_count()
     
@@ -641,9 +644,10 @@ if __name__ == "__main__":
         n_obj, n_table, pos_d, ang_d, siz_d, cla_d, invsha_d = 7, 1, 2, 2, 2, 2, 128
     elif args['data_type']=="3dfront":
         # TODO: add dimension for Graph relation data
-        tdf = TDFDataset(args['room_type'], use_augment=args['use_augment'], livingroom_only=args['livingroom_only'])
+        # tdf = TDFDataset(args['room_type'], use_augment=args['use_augment'], livingroom_only=args['livingroom_only'])
+        tdf = TDSGFront(use_augment=args['use_augment'])
         n_obj, pos_d, ang_d, siz_d, cla_d, invsha_d, maxnfpoc, nfpbpn = tdf.maxnobj, tdf.pos_dim, tdf.ang_dim, tdf.siz_dim, tdf.cla_dim, 0, tdf.maxnfpoc, tdf.nfpbpn # shape = size+class
-        edge_d = tdf.edge_dim
+        edge_d = tdf.n_edges
         print_str = f"room_type={args['room_type']}, no lamp"
     else:  # rect, rect_trans
         n_obj, pos_d, ang_d,  siz_d, cla_d, invsha_d = 6, 2, 0, 0, 0, 0

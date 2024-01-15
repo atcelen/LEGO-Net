@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 import matplotlib.transforms as mt
 import cv2 as cv
 
-from utils import *
-from distance import *
+from data.utils import *
+from data.distance import *
 
-from filepath import *
+from data.filepath import *
 
 
 TDF_room_types = [  "bedroom",      # 4041
@@ -640,7 +640,7 @@ class TDFDataset:
             SG_info[:, 1, self.maxnobj + self.edge_dim] = 1
             
             # pass
-        return input, labels, padding_mask, clean_scenepaths, fpoc, nfpc, fpmask, fpbpn, SG_info
+        return input, labels, padding_mask, clean_scenepaths, fpoc, nfpc, fpmask, fpbpn#, SG_info
 
 
 
@@ -856,6 +856,7 @@ if __name__ == '__main__':
     ## Example scene visualization
     sceneid = "b9d17d23-66f0-445d-acb7-f11887cc4f7f_LivingDiningRoom-192367" #_0 for augmented（teaser right, random idx = 1748)
     input, scenepath = tdf.read_one_scene(scenepath=sceneid) # scenepath: full path
+    print(scenepath)
     tdf.visualize_tdf_2d(input, f"TDFront_{sceneid}", f"Original", traj=None, scenepath=scenepath, show_corner=False)
 
     input[1, 0:4] = [-2.1, 1.87363994e+00, 9.13540407e-06, -1.00000000e+00]  # tv_stand 

@@ -6,38 +6,14 @@ import random
 import cv2 as cv
 from tqdm import tqdm
 
-from utils import *
-from distance import *
+from data.utils import *
+from data.distance import *
 
-from filepath import *
+from data.filepath import *
 
 TDF_DATA_DIR = r"D:\Datasets\processed-bedroom-diningroom-library-livingroom"
 SGF_DATA_DIR = r"D:\Datasets\SG_FRONT"
 
-cla2sup_cat = {
-    "armchair" : "seating", 
-    "bookshelf" : "storage", 
-    "cabinet" : "storage", 
-    "chaise_longue_sofa" : "seating", 
-    "chinese_chair" : "seating", 
-    "coffee_table" : "surface", 
-    "console_table" : "surface", 
-    "corner_side_table" : "surface", 
-    "desk" : "surface", 
-    "dining_chair" : "seating", 
-    "dining_table" : "surface", 
-    "l_shaped_sofa" : "seating", 
-    "lazy_sofa" : "seating", 
-    "lounge_chair" : "seating", 
-    "loveseat_sofa" : "seating", 
-    "multi_seat_sofa" : "seating", 
-    "round_end_table" : "surface", 
-    "shelf" : "storage", 
-    "stool" : "seating", 
-    "tv_stand" : "surface", 
-    "wardrobe" : "storage", 
-    "wine_cabinet" : "storage"
-}
 
 class TDSGFront():
     def __init__(self, use_augment=True, print_info=True):
@@ -72,7 +48,10 @@ class TDSGFront():
         
         self.scenes_tv = []
         self.scenes_test = []
-        for folder_name in folder_names:
+        self.data_tv = None
+        self.data_test = None
+
+        for folder_name in tqdm(folder_names):
             self.scene_dir = os.path.join(TDF_DATA_DIR, folder_name)
             trainvalrooms = split2room["train"] + split2room["val"]
             self.scenes_tv   +=  [os.path.join(self.scene_dir, e) 
@@ -86,22 +65,27 @@ class TDSGFront():
                                 if e.split("_")[1] in split2room["test"]]
             self.scenes_test = sorted(self.scenes_test)
         
+            # preload data into RAM
+            if os.path.exists(os.path.join(self.scene_dir, "data_tv_ctr.npz")):
+                new_tv = np.load( os.path.join(self.scene_dir, "data_tv_ctr.npz"), allow_pickle=True)
+                if self.data_tv is None:
+                    self.data_tv = dict(new_tv)
+                else:
+                    for key in set(self.data_tv) | set(new_tv):
+                        self.data_tv[key] = np.concatenate((self.data_tv[key], new_tv[key]), axis=0)
+                # KEYS : ['scenedirs', 'nbj', 'pos', 'ang', 'siz', 'cla', 'vol', 'fpoc', 'nfpc', 'ctr', 'fpbpn']
+            if os.path.exists(os.path.join(self.scene_dir, "data_test_ctr.npz")):
+                new_test = np.load( os.path.join(self.scene_dir, "data_test_ctr.npz"), allow_pickle=True)
+                if self.data_test is None:
+                    self.data_test = dict(new_test)
+                else:
+                    for key in set(self.data_test) | set(new_test):
+                        self.data_test[key] = np.concatenate((self.data_test[key], new_test[key]), axis=0)
+                # KEYS : ['scenedirs', 'nbj', 'pos', 'ang', 'siz', 'cla', 'vol', 'fpoc', 'nfpc', 'ctr', 'fpbpn']
+        
         if print_info: print(f"TDFDataset: len(self.scenes_tv)={len(self.scenes_tv)}, len(self.scenes_test)={len(self.scenes_test)}\n")
 
-        # preload data into RAM
-        if os.path.exists(os.path.join(self.scene_dir, "data_tv_ctr.npz")):
-            self.data_tv = np.load( os.path.join(self.scene_dir, "data_tv_ctr.npz"), allow_pickle=True)
-            # KEYS : ['scenedirs', 'nbj', 'pos', 'ang', 'siz', 'cla', 'vol', 'fpoc', 'nfpc', 'ctr', 'fpbpn']
-        if os.path.exists(os.path.join(self.scene_dir, "data_test_ctr.npz")):
-            self.data_test = np.load( os.path.join(self.scene_dir, "data_test_ctr.npz"), allow_pickle=True)
-            # KEYS : ['scenedirs', 'nbj', 'pos', 'ang', 'siz', 'cla', 'vol', 'fpoc', 'nfpc', 'ctr', 'fpbpn']
-        with open(os.path.join(self.scene_dir, "dataset_stats.txt")) as f:
-            # Same regardless of if only living room (ctr.npz processed from boxes.npz, generated in one go from ATISS for all living+livingdiningrooms)
-            # NOTE: data prepared with splits test+train+val (ATISS's preprocess_data.py)
-            ds_js_all= json.loads(f.read()) 
-
-        self.object_types = ds_js_all["object_types"] # class labels in order from 0 to self.cla_dim
-        self.mapping = cla2sup_cat # mapping from class labels to super-categories
+        self.object_types = ["seating", "storage", "surface", "lighting", "decor"]
         self.maxnobj = 21 # based on ATISS Suplementary Material
         self.maxnfpoc = 51 # bedroom: 25 , livingroom: 51(based on preprocessing data)
         self.nfpbpn = 250
@@ -109,7 +93,7 @@ class TDSGFront():
         self.pos_dim = 2 # coord in x, y (disregard z); normalized to [-1,1]
         self.ang_dim = 2 # cos(theta), sin(theta), where theta is in [-pi, pi]
         self.siz_dim = 2 # length of bounding box in x, y; normalized to [-1, 1]
-        self.cla_dim = len(set(self.mapping.values())) # number of classes (19 for bedroom, 22 for all else)
+        self.cla_dim = 5 # number of classes (19 for bedroom, 22 for all else)
         self.sha_dim = self.siz_dim+self.cla_dim
 
         self.cla_colors = list(plt.cm.rainbow(np.linspace(0, 1, self.cla_dim)))
@@ -441,6 +425,7 @@ class TDSGFront():
         batch_sg  = data["sg"][random_idx] # np.zeros((batch_size, self.maxnobj,)) # shape
         batch_vol = data['vol'][random_idx] # np.zeros((batch_size, self.maxnobj, 1)) # shape
 
+
         batch_fpoc, batch_nfpc, batch_fpmask, batch_fpbpn = None, [], None, None
         if use_floorplan:
             # floor plan representation 1: floor plan ordered corners
@@ -463,6 +448,284 @@ class TDSGFront():
 
         batch_sha = np.concatenate([batch_siz, batch_cla], axis=2)  # [batch_size, maxnumobj, 2+22=24]
         return batch_scenepaths, batch_nbj, batch_pos, batch_ang, batch_sha, batch_vol, batch_fpoc, batch_nfpc, batch_fpmask, batch_fpbpn, batch_sg
+    
+    ## DATA GENERATION: public API
+    def gen_3dfront(self, batch_size, random_idx=None, data_partition='trainval', use_emd=True, 
+                    abs_pos=True, abs_ang=True, use_floorplan=True, noise_level_stddev=0.1, angle_noise_level_stddev=np.pi/12,
+                    weigh_by_class = False, within_floorplan = False, no_penetration = False, pen_siz_scale=0.92, 
+                    is_classification=False, replica= ""):
+        """ Main entry point for generating data form the 3D-FRONT dataset.
+
+            batch_size: number of scenes
+            abs_pos/ang: if True, the returned labels are (final ordered assigned pos/ang); otherwise, use relative pos/ang
+                         = (final ordered assigned pos - initial pos, angle between final and initial angles)
+            noise_level_stddev, angle_noise_level_stddev: for adding position and angle noise. 
+                                                          input: {clean scenes + gaussian gaussian noise}, labels: {clean scene without noise + emd}
+            pen_siz_scale: value between 0 and 1, the lower the value, the more intersection among objects it allows when adding noise
+            replica: if not "room_0”, no effect; if "room_0", use room 0 (living room) from replica dataset as clean scene - for additional testing
+            
+            Intermediary: {clean, noisy}_{pos, ang, sha} have shape [batch_size, maxnumobj, 2]
+
+            Returns: 
+                input:  [batch_size, maxnumobj, pos+ang+siz+cla] = [x, y, cos(th), sin(th), bbox_lenx, bbox_leny, one-hot-encoding for class]
+                label:  [batch_size, maxnumobj, pos+ang] = [x, y, cos(th), sin(th)]
+                padding_mask: [batch_size, maxnumobj], for Transformer (nn.TransformerEncoder) to ignore padded zeros (value=False for not masked)
+                scenepaths: [batch_size,] <class 'numpy.ndarray'> of  <class 'numpy.str_'>
+                fpoc:   [batch_size, maxnfpoc=51, pos], floor plan ordered corners; pointnet
+                nfpc:   [batch_size], number of floor plan corners for each scene; pointnet
+                fpmask: [batch_size, 256, 256, 3], floor plan binary mask; resnet
+                fpbpn:  [batch_size, nfpbp=250, 4], floor plan boundary points and normals; pointnet_simple
+
+            Clean input's labels are identical to the input. Noisy input's labels are ordered assignment to clean position for each 
+            point (through earthmover distance assignment), using the original clean sample (noisy_orig_pos) as label, and angle labels
+            are the corresponding angles from the assignment.
+        
+            Note that this implementation takes a non-hierarhical, non-scene-graph, free-for-all approach: emd assignment is done freely 
+            among all objects of a class. 
+
+            Also note that in generating the noisy positions, chairs are given greater noise while tables are given less. This is to
+            teach the network to move certain types less.
+        """
+        clean_scenepaths, clean_nobj, clean_pos, clean_ang, clean_sha, clean_vol, clean_fpoc, clean_nfpc, clean_fpmask, clean_fpbpn, clean_sg = self._gen_3dfront_batch_preload(batch_size, data_partition=data_partition, use_floorplan=use_floorplan, random_idx=random_idx)
+        if False and random_idx == [1748]: # for rebuttal: manually swapping tv_stand and multi_seat_sofa (teaser right, b9d17d23-66f0-445d-acb7-f11887cc4f7f_LivingDiningRoom-192367)
+            clean_pos[0, 1, 0:2] = [-2.1/(self.room_size[0]/2), 1.87363994e+00/(self.room_size[0]/2)]
+            clean_ang[0, 1, 0:2] = [9.13540407e-06, -1.00000000e+00]
+            clean_pos[0, 5, 0:2] = [5.40149999e-01/(self.room_size[0]/2), 1.97992003e+00/(self.room_size[0]/2)]
+            clean_ang[0, 5, 0:2] = [9.13540407e-06, 1.00000000e+00]
+        if replica=="room_0": clean_scenepaths, clean_nobj, clean_pos, clean_ang, clean_sha, clean_vol, clean_fpoc, clean_nfpc, clean_fpmask, clean_fpbpn = gen_room0(batch_size)
+        
+        # input: pos, ang, siz, cla
+        perturbed_pos, perturbed_ang = self.clever_add_noise( clean_pos, clean_ang, clean_sha, clean_nobj, clean_fpoc, clean_nfpc, clean_vol, noise_level_stddev, angle_noise_level_stddev,
+                                                              weigh_by_class=weigh_by_class, within_floorplan=within_floorplan, no_penetration=no_penetration, pen_siz_scale=pen_siz_scale)
+
+        input = np.concatenate([perturbed_pos, perturbed_ang, clean_sha], axis=2) # [batch_size, maxnumobj, dims]
+
+        # label: pos, ang
+        if is_classification: # for 3dfront model evaluation
+            classification_token = np.concatenate([np.array([[[0,0, 1,0, 1,1]]]), np.zeros((1,1,self.cla_dim))], axis=2) # [1, 1, 2+2+2+19=25] -> [batch_size, 1, dims=25]
+            input = np.concatenate([input, np.repeat(classification_token, batch_size, axis=0)], axis=1)  # [batch_size, maxnumobj+1, pos+ang+siz+cla=dims=25]
+            # classification labels: [batch_size, 1]; clean is 1, noisy is 0 = probability(clean)
+            labels = np.concatenate([(np.zeros((batch_size//2, 1))+1), np.zeros((batch_size//2, 1))], axis=0)
+        else:
+            # Calculate absolute labels for noisy
+            if use_emd:
+                labels = self.emd_by_class(np.copy(perturbed_pos), np.copy(clean_pos), np.copy(clean_ang), np.copy(clean_sha), np.copy(clean_nobj))
+            else:
+                labels = np.copy(np.concatenate([clean_pos, clean_ang], axis=2) ) # directly use original scene
+            # If needed, overwrite it with relative
+            if not abs_pos:
+                labels[:,:,:self.pos_dim] = labels[:,:,:self.pos_dim] - perturbed_pos
+            if not abs_ang: # relative: change noisy_labels from desired pos and ang to displacement
+                ang_diff = np_angle_between(perturbed_ang, labels[:,:,self.pos_dim:self.pos_dim+self.ang_dim]) # [batch_size, nobj, 1].
+                    # both input to np angle between are normalized, from noisy_ang(noisy_input) to noisy_labels(noisy_orig_ang), in [-pi, pi], 
+                labels[:,:,self.pos_dim:self.pos_dim+1]              = np.cos(ang_diff) # [batch_size, nobj, 1]
+                labels[:,:,self.pos_dim+1:self.pos_dim+self.ang_dim] = np.sin(ang_diff) # [batch_size, nobj, 1]
+
+
+        # padding mask: for Transformer to ignore padded zeros
+        padding_mask = np.repeat([np.arange(self.maxnobj)], batch_size, axis=0) #[batch_size,maxnobj]
+        padding_mask = (padding_mask>=clean_nobj.reshape(-1,1)) # [batch_size,maxnobj] >= [batch_size, 1]: [batch_size,maxnobj] 
+            # False=not masked (unchanged), True=masked, not attended to (isPadding)
+        if is_classification: # add to padding for classifcation token at the end (not masked: false==0)
+            padding_mask = np.concatenate([padding_mask, np.zeros((batch_size, 1))], axis=1) # [batch_size, maxnobj+1]
+
+
+        # floor plan (3 representaitons): fpoc + nfpc, fpmask, fpbpn
+        fpoc, nfpc, fpmask, fpbpn = None, None, None, None
+        if use_floorplan: fpoc, nfpc, fpmask, fpbpn = clean_fpoc, clean_nfpc, clean_fpmask, clean_fpbpn
+
+        return input, labels, padding_mask, clean_scenepaths, fpoc, nfpc, fpmask, fpbpn, clean_sg
+    
+    def gen_3dfront_halfsplit(self, half_batch_size, data_partition='trainval', use_emd=True, abs_pos=True, abs_ang=True, use_floorplan=True,
+                              noise_level_stddev=0.1, angle_noise_level_stddev=np.pi/12,
+                              weigh_by_class = False, within_floorplan = False, no_penetration = False, pen_siz_scale=0.92, is_classification=False):
+        """  
+            Half of the generated scene (clean) do not have any noise added, whereas the other half (noisy) does.
+        """
+        clean_scenepaths, clean_nobj, clean_pos, clean_ang, clean_sha, clean_vol, clean_fpoc, clean_nfpc, clean_fpmask, clean_fpbpn, clean_sg = self._gen_3dfront_batch_preload(half_batch_size,  data_partition=data_partition, use_floorplan=use_floorplan) # NOTE: no noise for clean
+        noisy_orig_scenepaths, noisy_orig_nobj, noisy_orig_pos, noisy_orig_ang, noisy_orig_sha, noisy_orig_vol, noisy_orig_fpoc, noisy_orig_nfpc, noisy_orig_fpmask, noisy_orig_fpbpn = self._gen_3dfront_batch_preload(half_batch_size, data_partition=data_partition, use_floorplan=use_floorplan)
+        noisy_pos, noisy_ang = self.clever_add_noise(noisy_orig_pos, noisy_orig_ang, noisy_orig_sha, noisy_orig_nobj, noisy_orig_fpoc, noisy_orig_nfpc, noisy_orig_vol, noise_level_stddev, angle_noise_level_stddev, 
+                                                     weigh_by_class=weigh_by_class,within_floorplan=within_floorplan,no_penetration=no_penetration, pen_siz_scale=pen_siz_scale)
+
+        # scenepath, nobj
+        scenepaths = np.concatenate([clean_scenepaths, noisy_orig_scenepaths], axis=0)# 1d list (batch_size,) <class 'numpy.ndarray'> of  <class 'numpy.str_'>
+        nobjs = np.concatenate([clean_nobj, noisy_orig_nobj], axis=0) # [half_batch_size + half_batch_size = batch_size]
+        # pos, ang, siz, cla
+        clean_input = np.concatenate([clean_pos, clean_ang, clean_sha], axis=2) # [half_batch_size, maxnumobj, dims]
+        noisy_input = np.concatenate([noisy_pos, noisy_ang, noisy_orig_sha], axis=2) # [half_batch_size, maxnumobj, dims]
+        input = np.concatenate([clean_input, noisy_input], axis=0)  # [batch_size, maxnumobj, dims]
+        
+        if is_classification:
+            classification_token = np.concatenate([np.array([[[0,0, 1,0, 1,1]]]), np.zeros((1,1,self.cla_dim))], axis=2) # [1, 1, 2+2+2+19=25] -> [batch_size, 1, dims=25]
+            input = np.concatenate([input, np.repeat(classification_token, half_batch_size*2, axis=0)], axis=1)  # [batch_size, maxnumobj+1, pos+ang+siz+cla=dims=25]
+            # classification labels: [batch_size, 1]; clean is 1, noisy is 0 (probability to be clean)
+            labels = np.concatenate([(np.zeros((half_batch_size, 1))+1), np.zeros((half_batch_size, 1))], axis=0)
+        else:
+            clean_labels_pos = np.copy(clean_pos) if abs_pos else np.zeros((half_batch_size, self.maxnobj, self.pos_dim))
+            clean_labels_ang = np.copy(clean_ang) if abs_ang else np.zeros((half_batch_size, self.maxnobj, self.ang_dim))
+            clean_labels = np.copy(np.concatenate([clean_labels_pos, clean_labels_ang], axis=2))
+            
+            # first calculate absolute labels for noisy
+            if use_emd:
+                noisy_labels = self.emd_by_class(np.copy(noisy_pos), np.copy(noisy_orig_pos), np.copy(noisy_orig_ang), np.copy(noisy_orig_sha), np.copy(noisy_orig_nobj))
+            else:
+                noisy_labels = np.copy(np.concatenate([noisy_orig_pos, noisy_orig_ang], axis=2) ) # directly use original scene
+            # if needed, overwrite it with relative
+            if not abs_pos:
+                noisy_labels[:,:,:self.pos_dim] = noisy_labels[:,:,:self.pos_dim] - noisy_pos
+            if not abs_ang: # relative: change noisy_labels from desired pos and ang to displacement
+                ang_diff = np_angle_between(noisy_ang, noisy_labels[:,:,self.pos_dim:self.pos_dim+self.ang_dim]) # [half_batch_size, nobj, 1].
+                    # both input to np angle between are normalized, from noisy_ang(noisy_input) to noisy_labels(noisy_orig_ang), in [-pi, pi], 
+                noisy_labels[:,:,self.pos_dim:self.pos_dim+1]              = np.cos(ang_diff) # [half_batch_size, nobj, 1]
+                noisy_labels[:,:,self.pos_dim+1:self.pos_dim+self.ang_dim] = np.sin(ang_diff) # [half_batch_size, nobj, 1]
+
+            labels = np.concatenate([clean_labels, noisy_labels], axis=0)
+            
+        # padding mask
+        padding_mask = np.repeat([np.arange(self.maxnobj)], half_batch_size*2, axis=0) #[batch_size,maxnobj]
+        padding_mask = (padding_mask>=nobjs.reshape(-1,1)) # [batch_size,maxnobj] >= [batch_size, 1]: [batch_size,maxnobj] 
+            # False: not masked (unchanged), True=not attended to (isPadding)
+        if is_classification: # add to padding for classifcation token at the end (not masked: false==0)
+            padding_mask = np.concatenate([padding_mask, np.zeros(( half_batch_size*2, 1))], axis=1) # [batch_size, maxnobj+1]
+
+        # floor plan (3 representaitons): fpoc, nfpc + fpmask + fpbpn
+        fpoc, nfpc, fpmask, fpbpn = None, None, None, None
+        if use_floorplan: 
+            fpoc = np.concatenate([clean_fpoc, noisy_orig_fpoc], axis=0) # [batch_size, maxnfpoc, pos_dim]
+            nfpc = np.concatenate([clean_nfpc, noisy_orig_nfpc], axis=0) # [batch_size] 
+            fpmask = np.concatenate([clean_fpmask, noisy_orig_fpmask], axis=0) # [batch_size, 256,256,3]
+            fpbpn = np.concatenate([clean_fpbpn, noisy_orig_fpbpn], axis=0) # [batch_size, self.nfpbp=250, 4]
+
+        return input, labels, padding_mask, scenepaths, fpoc, nfpc, fpmask, fpbpn, clean_sg
+    
+    ## VISUALIZATION
+    def read_one_scene(self, scenepath=None, normalize=False):
+        """ Reads data from boxes npz files
+
+            scenepath: if not provided, randomly choose a scene. 
+                       Not the full path, just the room scene id / directory name containing the boxes.npz file
+            normalize: if true, normalize data to [-1,1] as in training data preparation. Default to false for visualization.
+
+            Returns:
+            input: [nobj, pos_d+ang_d+siz_d+cla_d]
+        """
+        scenepath = random.choice(self.scenes_test) if scenepath is None else os.path.join(self.scene_dir, scenepath)
+        # print("\n", scenepath)
+        scene_data = np.load(os.path.join(scenepath, "boxes.npz"), allow_pickle=True)
+
+        nobj = scene_data['jids'].shape[0]
+        
+        scene_pos = np.zeros((nobj, self.pos_dim))
+        scene_ang = np.zeros((nobj, self.ang_dim))
+        scene_siz = np.zeros((nobj, self.siz_dim))
+        scene_cla = np.zeros((nobj, self.cla_dim))
+
+        scene_pos[:,0] = scene_data['translations'][:,0] # [-3, 3]
+        scene_pos[:,1] = scene_data['translations'][:,2]
+        if normalize: 
+            scene_pos[:,0] /= (self.room_size[0]/2) # [-1,1]
+            scene_pos[:,1] /= (self.room_size[2]/2) # [-1,1]
+            
+        scene_ang[:,0:1] = np.cos(scene_data['angles']*-1) # since pos z (out of screen) -> neg y (vertical flip)
+        scene_ang[:,1:2] = np.sin(scene_data['angles']*-1)
+
+        scene_siz[:,0] = scene_data['sizes'][:,0]*2 # [0,3]*2 original: half of bounding box length
+        scene_siz[:,1] = scene_data['sizes'][:,2]*2
+        if normalize: 
+            scene_siz[:,0] = scene_siz[:,0]/(self.room_size[0]/2)-1 # [-1,1]
+            scene_siz[:,1] = scene_siz[:,1]/(self.room_size[2]/2)-1
+
+        scene_cla = scene_data['class_labels'][:,:self.cla_dim] # subsequent columns are 0
+
+        input = np.concatenate([scene_pos, scene_ang, scene_siz, scene_cla], axis=1)
+
+        return input, scenepath
+    
+    def visualize_tdf_2d_denoise(self, traj, args=None, vis_traj=True, scenepath=None, fp='vis_2d_pointcloud_eval.jpg', title='Final assignment', fpoc=None):
+        """ Graph the given one scene/room on 2d xy plane.
+            traj: [iter, numobj, pos_d+ang_d+siz_d+cla_d]
+            args: needed only for 3d visualization; fields needed: {to_3dviz, room_type, to_keyshot}
+            vis_traj: whether to show movement trajectory of objects through lines
+            scenepath: example = <full_path>/fe174e21-5e11-4004-8347-f4e5e2e7b30c_LivingDiningRoom-20428 (directory with boxes.npz)
+            fpoc: only used if scenepath is None, [nfpc, pos_dim=2]
+        """
+        P, A, S = self.pos_dim, self.ang_dim, self.siz_dim
+        nobj, cla_idx = TDSGFront.parse_cla(traj[0,:,P+A+S:]) # uses initial cla for all snapshot in traj (generated input, never perturbed)
+        
+        if not vis_traj: traj = traj[-2:-1] # only visualize final
+
+        # back to original scale in boxes.npz (absolute scale in 6x6m)
+        traj[:,:nobj,0:1] *= (self.room_size[0]/2) # [-1,1] -> [-3,3] (okay to modify in place)
+        traj[:,:nobj,1:2] *= (self.room_size[2]/2) # [-1,1] -> [-3,3] # use z as y
+        traj[:, :nobj, P+A:P+A+1] = (traj[:, :nobj, P+A:P+A+1]+1)*(self.room_size[0]/2) #[-1,1] -> [0,2] -> [0,6] (full bbox len)
+        traj[:, :nobj, P+A+1:P+A+2] = (traj[:, :nobj, P+A+1:P+A+2]+1)*(self.room_size[2]/2) #[-1,1] -> [0,2] -> [0,6] (full bbox len) # use z as y
+
+        t=traj if vis_traj else None
+
+        self.visualize_tdf_2d(traj[-1], f"{fp}", f"{title}", args=args, traj=t, nobj=nobj, cla_idx=cla_idx, scenepath=scenepath, fpoc=fpoc)
+
+
+    def visualize_tdf_2d(self, scene, fp, title, args=None, traj=None, nobj=None, cla_idx=None, scenepath=None, show_corner=False, show_fpbpn=False, fpoc=None):
+        """ Visualize one given scene.
+            scene:     has shape [:, pos_d+ang_d+siz_d+cla_d]. Visualized on top of trajectory (if applicable).
+            fp:        filepath
+            title:     title of saved figure
+            args:      needed only for 3d visualization; fields needed: {to_3dviz, room_type, to_keyshot}
+            traj:      if given, show movement trajectory of objects through lines
+            scenepath: for visualizing floor plan. If given, should be the full path to directory containing boxes npz.
+            fpoc:      floor plan ordered corners, only used if scenepath is None, [nfpc, pos_dim=2]
+        """
+        if (nobj is None) or (cla_idx is None):  
+            nobj, cla_idx = TDSGFront.parse_cla(scene[:,self.pos_dim+self.ang_dim+self.siz_dim:]) # generated input, never perturbed
+
+        siz = scene[:nobj, self.pos_dim+self.ang_dim : self.pos_dim+self.ang_dim+self.siz_dim]  # bbox lengths
+        arrows = np_rotate(scene[:nobj,self.pos_dim:self.pos_dim+self.ang_dim], np.zeros((nobj,1))+np.pi/2) # rot counterclockwise about origin as these are directional vec
+            # NOTE: add 90 deg because of offset between 0 degree angle visualization (1,0) and 0 degree obj, which faces positive y/(0, 1)
+                
+        fig = plt.figure(dpi=300, figsize=(5,5))
+        for o_i in range(nobj):
+            c =self.cla_colors[cla_idx[o_i]].reshape(1,-1) # (4,) -> (1,4)
+            if traj is not None: plt.plot(traj[:,o_i,0], traj[:,o_i,1], c=c, alpha=0.45) # bottom layer
+            plt.text(scene[o_i,0]-0.1, scene[o_i,1]+0.05, self.object_types[cla_idx[o_i]], size=6) 
+            plt.scatter(scene[o_i,0], scene[o_i,1], c=c) 
+            plt.quiver(scene[o_i,0], scene[o_i,1], arrows[o_i,0], arrows[o_i,1], color=c)
+            plt.gca().add_patch(plt.Rectangle(
+                                    (scene[o_i,0]-siz[o_i,0]/2, scene[o_i,1]-siz[o_i,1]/2), 
+                                    siz[o_i,0], siz[o_i,1], linewidth=1, edgecolor=c, facecolor='none',
+                                    transform = mt.Affine2D().rotate_around(scene[o_i,0], scene[o_i,1], np.arctan2(scene[o_i,3], scene[o_i,2])) +plt.gca().transData 
+                                ))
+        
+        R = (room_info["room_size"][self.room_type][0]/2)
+        rang = [-R, R] #[-3,3] for bedroom
+
+        # floor plan related
+        if scenepath is not None:
+            scene_data = np.load(os.path.join(scenepath, "boxes.npz"), allow_pickle=True)
+            plt.imshow(np.squeeze(scene_data["remapped_room_layout"]), alpha=0.2,  extent=(rang[0],rang[1],rang[1],rang[0]), cmap='gray', vmin=0, vmax=255.) # flip vertically       
+            if show_corner:
+                corners = scene_data["floor_plan_ordered_corners"] # num_pt, 2
+                plt.scatter(corners[:,0], corners[:,1]) 
+            if show_fpbpn:
+                fpbpn = scene_data["floor_plan_boundary_points_normals"] # num_pt, 4
+                plt.plot(fpbpn[:,0], fpbpn[:,1], 'or', markersize=3, alpha=0.7)
+                
+                # choice = np.round(np.linspace(0, len(self.nfpbpn)-1, num=5)).astype(int)
+                for i in range(0, self.nfpbpn, 5): # 250/5 = 50 points 
+                    plt.quiver(fpbpn[i,0], fpbpn[i,1], fpbpn[i,2]+0.00001, fpbpn[i,3]+0.00001, width=0.005) # at the start pt
+        else:
+            if fpoc is not None:
+                plt.plot(np.append(fpoc[:,0], [fpoc[0,0]]), np.append(fpoc[:,1], [fpoc[0,1]]), 'o-', c='k', markersize=3, alpha=1) # line connecting circle
+
+        plt.gca().set(xlim=rang, ylim=rang)
+        roomid="" if scenepath is None else os.path.split(scenepath)[1]
+        plt.title(f"{title}\n{roomid}", fontsize=8)
+        plt.xticks(fontsize=7)
+        plt.yticks(fontsize=7)
+        fig.tight_layout()
+        plt.savefig(f"{fp}.jpg")
+        plt.close(fig)
+    
+    
         
 
     
