@@ -6,12 +6,15 @@ import sys
 import cv2 as cv
 import copy
 from scipy.interpolate import interp1d
+from tqdm import tqdm
+import shutil
+
 
 sys.path.insert(1, os.getcwd())
 
-from data.utils import *
-from data.distance import *
-from data.TDFront import TDFDataset, room_info
+from utils import *
+from distance import *
+from TDFront import TDFDataset, room_info
 
 
 def process_floorplan_iterative_closest_point(tdf, scenepath=None, savedir=None, to_vis=True, to_save_new_contour=True):
@@ -20,25 +23,35 @@ def process_floorplan_iterative_closest_point(tdf, scenepath=None, savedir=None,
         """
         scenepath = random.choice(tdf.scenes_test) if scenepath is None else os.path.join(tdf.scene_dir, scenepath)
         scene_data = np.load(os.path.join(scenepath, "boxes.npz"))
-        
+    
+        ## Target: ATISS's generated points, extracted from 3DFRONT mesh objects in json
+        corners = np.unique(scene_data["floor_plan_vertices"],axis=0) # num_pt, 2 -> num_uniquept, 2
+        corners = scene_data["floor_plan_vertices"] 
+        corners += -scene_data["floor_plan_centroid"]  # +((-R)-floor_plan_centroid) centers it, +(R) changes from [-6,0] to [-3,3] # centroid=(3,) 
+        corners = corners[:,[0,2]] 
         ## Source: contour points found on room_layout mask
         room_layout = np.squeeze(scene_data["room_layout"])
         all_contours, hierarchy = cv.findContours(room_layout, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
             # all_contours: tuple of contours in image. Each contour = numpy array of (x,y) coordinates of boundary points [numpt, 1, 2]
         contour = all_contours[0] if len(all_contours)==1 else max(all_contours, key = cv.contourArea) # a few edge cases have > 1 enclosed region
         contour = np.squeeze(contour) # (numcontourpt,1,2) -> (numcontourpt,2)
-        R = (room_info["room_size"][tdf.room_type][0]/2)
+        # R = (room_info["room_size"][tdf.room_type][0]/2) # 3 for bedroom
+        R = ((np.max(corners[:, 0]) - np.min(corners[:, 0])) + (np.max(corners[:, 1]) - np.min(corners[:, 1]))) / 4
+        # print("R: ", R)
         contour = contour / (room_layout.shape[0]) * (R*2) - R #[-3,3]
         original_contour = np.copy(contour)
 
-        ## Target: ATISS's generated points, extracted from 3DFRONT mesh objects in json
-        corners = np.unique(scene_data["floor_plan_vertices"],axis=0) # num_pt, 2 -> num_uniquept, 2
-        corners += -scene_data["floor_plan_centroid"]  # +((-R)-floor_plan_centroid) centers it, +(R) changes from [-6,0] to [-3,3] # centroid=(3,) 
-        corners = corners[:,[0,2]] 
+        # print("CONTOUR")
+        # print(np.max(contour[:, 0]) - np.min(contour[:, 0]))
+        # print(np.max(contour[:, 1]) - np.min(contour[:, 1]))
+        # print("CORNERS")
+        # print(np.max(corners[:, 0]) - np.min(corners[:, 0]))    
+        # print(np.max(corners[:, 1]) - np.min(corners[:, 1]))
 
+        
         ## Iterative closest point
         max_iter = 100
-        dist_to_discard = 0.25 if tdf.room_type=="bedroom" else 0.8
+        dist_to_discard = 1.5 if tdf.room_type=="bedroom" else 1.5
         for iter in range(max_iter):
             scale_sum, new_contour, mapped_corner = 0, [], []
             for conpt in contour:
@@ -49,10 +62,19 @@ def process_floorplan_iterative_closest_point(tdf, scenepath=None, savedir=None,
                 new_contour.append(conpt) # keep it in next iteration
                 mapped_corner.append(corners[min_index]) # for if we break
                 scale_sum += np.linalg.norm(corners[min_index]) / np.linalg.norm(conpt) # we take its average
-            
             new_contour = np.array(new_contour)
-            transform_scale = scale_sum/new_contour.shape[0]
-            if abs(transform_scale-1) < 0.01: break
+            try:
+                transform_scale = scale_sum/new_contour.shape[0]
+            except:
+                print("Scenepath: ", scenepath)
+                print("CONTOUR")
+                print(np.max(contour[:, 0]) - np.min(contour[:, 0]))
+                print(np.max(contour[:, 1]) - np.min(contour[:, 1]))
+                print("CORNERS")
+                print(np.max(corners[:, 0]) - np.min(corners[:, 0]))    
+                print(np.max(corners[:, 1]) - np.min(corners[:, 1]))
+            if abs(transform_scale-1) < 0.01:
+                break
             contour = new_contour*transform_scale # transform
 
         ordered_unique_idx = sorted(np.unique(mapped_corner, axis=0, return_index=True)[1]) # mapped_corner retains order of contour
@@ -164,21 +186,20 @@ def preprocess_floor_plan(tdf):
     """
     print("preprocess_floor_plan: start")
     counter = 0
-    for e in os.listdir(tdf.scene_dir): # train, val, and test
+    for e in tqdm(os.listdir(tdf.scene_dir)): # train, val, and test
         if not os.path.isdir(os.path.join(tdf.scene_dir, e)): continue
-
         counter += 1
-        if counter % 500==0 : print(" ", counter)
+        # if counter % 500==0 : print(" ", counter)
         
         scene_data = dict(np.load(os.path.join(tdf.scene_dir, e, "boxes.npz")))
         mapped_corner, new_contour_mask = process_floorplan_iterative_closest_point(
                     tdf, scenepath = os.path.join(tdf.scene_dir, e), savedir = None, to_vis=False, to_save_new_contour=True)
         scene_data["floor_plan_ordered_corners"] = mapped_corner # not normalized
         scene_data["remapped_room_layout"] = new_contour_mask # (256,256,1)
-
+        
         scene_fpbpn = scene_sample_fpbp(tdf, scene_data["floor_plan_ordered_corners"], scenedir=e, to_vis=False)
         scene_data["floor_plan_boundary_points_normals"] = scene_fpbpn # [nfpbp=250, 4], in [-3,3] + [-1,1] (unit circle)
-        
+
         np.savez_compressed( os.path.join(tdf.scene_dir, e, "boxes"),  **scene_data)
     
     print("preprocess_floor_plan: done\n")
@@ -242,8 +263,8 @@ def write_all_data_summary_npz(tdf, trainval=False):
         batch_vol[i,:nobj,0] = scene_data['sizes'][:,0] * scene_data['sizes'][:,1] * scene_data['sizes'][:,2] * 8 # absolute scale volume
 
         corners = scene_data["floor_plan_ordered_corners"] # (numpt, 2), in [-3, 3]
-        batch_fpoc[i, :corners.shape[0], 0] = corners[:,0] /(tdf.room_size[0]/2) # scale to [-1, 1]
-        batch_fpoc[i, :corners.shape[0], 1] = corners[:,1] /(tdf.room_size[2]/2) # scale to [-1, 1]
+        batch_fpoc[i, :corners.shape[0], 0] = corners[:tdf.maxnfpoc,0] /(tdf.room_size[0]/2) # scale to [-1, 1]
+        batch_fpoc[i, :corners.shape[0], 1] = corners[:tdf.maxnfpoc,1] /(tdf.room_size[2]/2) # scale to [-1, 1]
         batch_nfpc.append(corners.shape[0])
 
         ## If to save fpmask:
@@ -252,7 +273,7 @@ def write_all_data_summary_npz(tdf, trainval=False):
         # batch_fpmask[i] = np.concatenate([fpmask, xy], axis=2) #(256,256,1+2=3)
         R = (room_info["room_size"][tdf.room_type][0]/2) # 3 for bedroom
         ctr = np.expand_dims( (scene_data["floor_plan_ordered_corners"]+R) /(R*2) * 256, 1).astype(np.int32) # [numpt,1,3], .astype(numpy.int32), in [0,256]
-        batch_ctr[i, :ctr.shape[0], :, :] = ctr
+        batch_ctr[i, :ctr.shape[0], :, :] = ctr[:51] # (51, 1, 2) # 51 is the max numpt in all scenes
 
         batch_fpbpn[i,:,0:2] = scene_data["floor_plan_boundary_points_normals"][:,0:2] / (tdf.room_size[0]/2) # [nfpbpn, 2], [-3,3] -> [1,1] 
         batch_fpbpn[i,:,2:4] = scene_data["floor_plan_boundary_points_normals"][:,2:4] # [nfpbpn, 2], normals (already noramlized)
@@ -302,7 +323,11 @@ def augment(tdf):
     new_scene_dir = os.path.join (os.path.split(tdf.scene_dir)[0], f"processed_{tdf.room_type}_augmented")
 
     if not os.path.exists(new_scene_dir): os.makedirs(new_scene_dir)
-    os.system(f"cp {os.path.join(tdf.scene_dir, 'dataset_stats_all.txt')} {os.path.join(new_scene_dir, 'dataset_stats_all.txt')}")  
+
+    source_path = os.path.join(tdf.scene_dir, 'dataset_stats.txt')
+    destination_path = os.path.join(new_scene_dir, 'dataset_stats.txt')
+
+    shutil.copy(source_path, destination_path) 
 
     count = 0
     for d in list(os.listdir(tdf.scene_dir)):
@@ -359,33 +384,31 @@ def augment(tdf):
 
 
 if __name__ == '__main__':
-    exit()
-
-    ### PREPROCESS
-    # tdf=TDFDataset("livingroom", use_augment=False, livingroom_only=False)
+    ## PREPROCESS
+    tdf=TDFDataset("bedroom", use_augment=False, livingroom_only=False)
     
-    ## 1. Write floor_plan_ordered_corners, remapped_room_layout (part of fpmask), floor_plan_boundary_points_normals to same scene boxes npz files
-    # preprocess_floor_plan(tdf) 
-    # print("------------------------")
+    # 1. Write floor_plan_ordered_corners, remapped_room_layout (part of fpmask), floor_plan_boundary_points_normals to same scene boxes npz files
+    preprocess_floor_plan(tdf) 
+    print("------------------------")
 
-    ## 2. Normalize data and create summary data_tv/test_ctr(_livingroomonly).npz, 1 for each call
-    # write_all_data_summary_npz(tdf, trainval=True)
-    # write_all_data_summary_npz(tdf, trainval=False)
+    # 2. Normalize data and create summary data_tv/test_ctr(_livingroomonly).npz, 1 for each call
+    write_all_data_summary_npz(tdf, trainval=True)
+    write_all_data_summary_npz(tdf, trainval=False)
 
 
 
-    ### AUGMENT
-    #  Creates a new processed_<roomtype>_augmented directory containing:
+    ## AUGMENT
+    #Creates a new processed_<roomtype>_augmented directory containing:
 
-    ## 1. dataset_stats_all.txt, <jid_0-3>/boxes.npz, room_mask.png
-    # tdf=TDFDataset("livingroom", use_augment=False, livingroom_only=False)
-    # preprocess_floor_plan(tdf) 
-    # print("------------------------")
-    # augment(tdf) # assume livingroom directory already has floor plan processed
-    # print("------------------------")
+    # 1. dataset_stats_all.txt, <jid_0-3>/boxes.npz, room_mask.png
+    tdf=TDFDataset("bedroom", use_augment=False, livingroom_only=False)
+    preprocess_floor_plan(tdf) 
+    print("------------------------")
+    augment(tdf) # assume livingroom directory already has floor plan processed
+    print("------------------------")
 
-    ## 2. data_tv/test_ctr(_livingroomonly).npz
-    # tdf=TDFDataset("livingroom", use_augment=True, livingroom_only=False)
-    # write_all_data_summary_npz(tdf, trainval=True)
-    # write_all_data_summary_npz(tdf, trainval=False)
+    # 2. data_tv/test_ctr(_livingroomonly).npz
+    tdf=TDFDataset("bedroom", use_augment=True, livingroom_only=False)
+    write_all_data_summary_npz(tdf, trainval=True)
+    write_all_data_summary_npz(tdf, trainval=False)
 
