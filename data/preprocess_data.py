@@ -96,12 +96,13 @@ def preprocess(data):
             # atiss_objs = list(np.array(category_mapping)[col_])
             # atiss_objs = [item for item in atiss_objs if item not in ["ceiling_lamp", "pendant_lamp"]]
             # if sg_scene_objs != atiss_objs:
-            #     print(scene_id)
-            #     print("3D-Front from the download link")
-            #     print(sg_scene_objs)
-            #     print("3D-Front from the provided Google Drive")
-            #     print(atiss_objs)
-            #     print("-------------------")
+                # print(scene_id)
+                # print("3D-Front from the download link")
+                # print(sg_scene_objs)
+                # print("3D-Front from the provided Google Drive")
+                # print(atiss_objs)
+                # print("-------------------")
+                # raise ValueError("The objects in the downloaded 3D-Front data and the provided Google Drive data do not match")
             # else:
             # Delete floor and light relationships
             items_to_delete = []
@@ -125,8 +126,8 @@ def preprocess(data):
             edge_one_hot = np.zeros((MAX_N_EDGES, 2 * MAX_N_OBJ + N_EDGE_TYPES))
             for idx, item in enumerate(found_dict["relationships"]):
                 edge_one_hot[idx, item[0] - 1] = 1
-                edge_one_hot[idx, item[1] - 1 + N_NODE_TYPES] = 1
-                edge_one_hot[idx, prep2idx[item[3]] + 2 * N_NODE_TYPES] = 1
+                edge_one_hot[idx, prep2idx[item[3]]+ N_NODE_TYPES] = 1
+                edge_one_hot[idx, item[1] - 1 + 2 * N_NODE_TYPES] = 1
             data["sg"].append(edge_one_hot.tolist())
             # Change the class to super-category
             # for new_cl, atiss_obj_row in zip(new_classes_array[i], map(cla2sup_cat.get, atiss_objs)):

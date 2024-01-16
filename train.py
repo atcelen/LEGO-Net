@@ -621,7 +621,7 @@ def initialize_parser():
 if __name__ == "__main__":
     args = initialize_parser() # global variable
     args["timestamp"] = datetime.datetime.now().strftime("%m%d_%H%M%S_%f")[:-3] # trim 3/6 digits of ms, used to be str(int(time.time()))
-    args["logsavedir"] = logsavedir_from_args(args)
+    args["logsavedir"] = r"D:\Datasets\LegoNetCheckpoints" #logsavedir_from_args(args)
     args["logfile"] = os.path.join(args['logsavedir'], "log.txt")
     args["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"args['device']={args['device']}")

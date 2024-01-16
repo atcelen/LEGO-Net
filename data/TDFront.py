@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 import matplotlib.transforms as mt
 import cv2 as cv
 
-from data.utils import *
-from data.distance import *
+from utils import *
+from distance import *
 
-from data.filepath import *
+from filepath import *
 
 
 TDF_room_types = [  "bedroom",      # 4041
@@ -30,7 +30,7 @@ room_info = {
     },
     "room_size": { # y axis: height
         "bedroom": [6,4,6],
-        "diningroom": [6,4,6],
+        "diningroom": [12,4,12],
         "library": [12,4,12],
         "livingroom": [12,4,12],
     },
