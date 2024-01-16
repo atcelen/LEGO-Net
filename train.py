@@ -601,7 +601,7 @@ def initialize_parser():
     parser.add_argument("--livingroom_only",  type = int, default=0, help="3D-FRONT specific. livingroom specific. If 1, discard livingdiningroom.") 
     parser.add_argument("--use_emd", type = int, default=1, help="3D-FRONT specific. Earthmover's distance.") # whether to use earthmover distance assignment or original scene for noisy label
     parser.add_argument("--use_floorplan", type = int, default=1, help="3D-FRONT specific. Takes in floor plan of scene. Exact format determined by floorplan_encoder_type.")
-    parser.add_argument("--use_SG", type = int, default=0, help="3D-FRONT specific. Takes in scene graph information of scene.")
+    parser.add_argument("--use_SG", type = int, default=1, help="3D-FRONT specific. Takes in scene graph information of scene.")
     parser.add_argument("--use_augment",  type = int, default=1, help="3D-FRONT specific. Augmentation involved creating 4 rotated versions of each scene.") # for room_type==livingroom (if true, discard livingdiningroom )
     parser.add_argument("--floorplan_encoder_type", type = str, default="pointnet_simple", choices = ["pointnet", "resnet", "pointnet_simple"],
                         help='''3D-FRONT specific.
