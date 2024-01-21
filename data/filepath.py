@@ -12,7 +12,7 @@ path_to_floor_plan_textures = os.path.join(home_dir, "ATISS/demo/floor_plan_text
 
 
 ### Preprocessed 3D-FRONT dataset (stores files like splits.csv, each scene's boxes.npz)
-data_dir = os.path.join(home_dir, "processed-bedroom-diningroom-library-livingroom")
+data_dir = os.path.join(home_dir, "processed-tdf")
 
 
 ### Evaluation files/output directory

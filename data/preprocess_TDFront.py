@@ -129,7 +129,7 @@ def process_floorplan_iterative_closest_point(tdf, scenepath=None, savedir=None,
         
         if to_save_new_contour:
             new_contour_mask = np.zeros((256,256,1))
-            ctr = np.expand_dims( ((mapped_corner/resize_multiplier)+R) /(R*2) * 256, 1).astype(np.int32) # [numpt, 1, 2], .astype(numpy.int32)
+            ctr = np.expand_dims( ((mapped_corner)+R) /(R*2) * 256, 1).astype(np.int32) # [numpt, 1, 2], .astype(numpy.int32)
             cv.drawContours(new_contour_mask, [ctr], -1 , (255,255,255), thickness=-1) # thickness < 0 : fill
             if to_vis:
                 cv.imwrite(os.path.join(savedir, f"{scenepath.split('/')[-1]}_newcontour.jpg"), new_contour_mask)
@@ -356,11 +356,8 @@ def augment(tdf):
 
     shutil.copy(source_path, destination_path) 
 
-    count = 0
-    for d in list(os.listdir(tdf.scene_dir)):
+    for d in tqdm(list(os.listdir(tdf.scene_dir))):
         if not os.path.isdir(os.path.join(tdf.scene_dir, d)): continue
-        count += 1
-        if count % 500 == 0: print(" ", count)
         scene_data = dict(np.load(os.path.join(tdf.scene_dir, d, "boxes.npz"), allow_pickle=True))
 
         nobj = scene_data['jids'].shape[0]
@@ -431,7 +428,7 @@ if __name__ == '__main__':
     tdf=TDFDataset("library", use_augment=False, livingroom_only=False)
     preprocess_floor_plan(tdf) 
     print("------------------------")
-    augment(tdf) # assume library directory already has floor plan processed
+    augment(tdf) # assume livingroom directory already has floor plan processed
     print("------------------------")
 
     # 2. data_tv/test_ctr(_livingroomonly).npz

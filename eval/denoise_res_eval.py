@@ -32,6 +32,7 @@ def dist_2_gt(trajs, scenepaths, tdf, use_emd=True):
     """
     P, A, S = tdf.pos_dim, tdf.ang_dim, tdf.siz_dim
 
+
     scenes_mean_perobjdists = []
     for scene_i in range(trajs.shape[0]):
         final = trajs[scene_i][-1] # (maxnobj, pos+ang+siz+cla)
@@ -48,10 +49,15 @@ def dist_2_gt(trajs, scenepaths, tdf, use_emd=True):
         gt_pos = gt_assignment[:nobj, :tdf.pos_dim] #  [nobj, P]
         per_obj_dists = np.linalg.norm(final_pos-gt_pos, axis=1) #[nobj,]
         scene_mean_perobjdist = np.mean(per_obj_dists) # for this scene, on avg, how far is each obj from ground truth
-        scenes_mean_perobjdists.append(scene_mean_perobjdist)
+        room_type = scenepaths[scene_i].split("\\")[-1].split("_")[1]
+        if "Bedroom" in room_type: room_type = "bedroom"
+        elif "LivingRoom" in room_type: room_type = "livingroom"
+        elif "DiningRoom" in room_type: room_type = "diningroom"
+        elif "Library" in room_type: room_type = "library"
+        scenes_mean_perobjdists.append(scene_mean_perobjdist / tdf.room_size[room_type][0])
 
     # NOTE: each scene is weighed the same. For rooms with more num of furnitures, many of them share 1 slice of weight -> have less impact
-    return np.mean(scenes_mean_perobjdists)/(tdf.room_size[0]/2) # x and y/z have same length
+    return np.mean(scenes_mean_perobjdists) # x and y/z have same length
 
 
 def tdfront_success(data_type, fp, thresholds=None, within_floorplan=True, no_penetration=False):

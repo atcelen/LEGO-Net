@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 import matplotlib.transforms as mt
 import cv2 as cv
 
-from utils import *
-from distance import *
+from data.utils import *
+from data.distance import *
 
-from filepath import *
+from data.filepath import *
 
 
 TDF_room_types = [  "bedroom",      # 4041

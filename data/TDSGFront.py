@@ -6,6 +6,7 @@ import random
 import cv2 as cv
 from tqdm import tqdm
 
+from data.mapping import bedroom_idx, livingroom_idx, library_idx, cla2sup_cat, sup_cat2idx
 from data.utils import *
 from data.distance import *
 
@@ -14,6 +15,26 @@ from data.filepath import *
 TDF_DATA_DIR = r"D:\Datasets\processed-bedroom-diningroom-library-livingroom"
 SGF_DATA_DIR = r"D:\Datasets\SG_FRONT"
 
+room_info = {
+    "nobj": { # inclusive, from preprocessing the dataset
+        "bedroom": [3, 12],
+        "diningroom": [3, 21],
+        "library": [3, 11],
+        "livingroom": [3, 21]
+    },
+    "room_size": { # y axis: height
+        "bedroom": [6,4,6],
+        "diningroom": [12,4,12],
+        "library": [12,4,12],
+        "livingroom": [12,4,12],
+    },
+    "maxnfpoc":{ # maximum number of floor plan ordered corners
+        "bedroom": [4,25],
+        "livingroom": [1,51], # 39 rooms above 35
+        "library": [4,25],
+        "diningroom": [4,25]
+    }
+}
 
 class TDSGFront():
     def __init__(self, use_augment=True, print_info=True):
@@ -41,17 +62,18 @@ class TDSGFront():
         for s in ["train", "test", "val"]:
             split2room[s] = [room for room in split2room[s] if room in all_scan_ids]
         
+        self.use_augment = use_augment
         if use_augment:
-            folder_names = [f for f in os.listdir(TDF_DATA_DIR) if f.startswith("processed") and f.endswith("augmented")]
+            self.folder_names = [f for f in os.listdir(TDF_DATA_DIR) if f.startswith("processed") and f.endswith("augmented")]
         else:
-            folder_names = [f for f in os.listdir(TDF_DATA_DIR) if f.startswith("processed") and not f.endswith("augmented")]
+            self.folder_names = [f for f in os.listdir(TDF_DATA_DIR) if f.startswith("processed") and not f.endswith("augmented")]
         
         self.scenes_tv = []
         self.scenes_test = []
         self.data_tv = None
         self.data_test = None
 
-        for folder_name in tqdm(folder_names):
+        for folder_name in tqdm(self.folder_names):
             self.scene_dir = os.path.join(TDF_DATA_DIR, folder_name)
             trainvalrooms = split2room["train"] + split2room["val"]
             self.scenes_tv   +=  [os.path.join(self.scene_dir, e) 
@@ -98,7 +120,7 @@ class TDSGFront():
 
         self.cla_colors = list(plt.cm.rainbow(np.linspace(0, 1, self.cla_dim)))
 
-        self.room_size = [12, 4, 12] #[rs_x, rs_y, rs_z]
+        self.room_size = room_info["room_size"] # [x, y, z]
     
     ## HELPER FUNCTION: agnostic of specific dataset configs
     @staticmethod
@@ -186,7 +208,7 @@ class TDSGFront():
 
         return noisy_pos
     
-    def clever_add_noise(self, noisy_orig_pos, noisy_orig_ang, noisy_orig_sha, noisy_orig_nobj, noisy_orig_fpoc, noisy_orig_nfpc, noisy_orig_vol, 
+    def clever_add_noise(self, scenepaths, noisy_orig_pos, noisy_orig_ang, noisy_orig_sha, noisy_orig_nobj, noisy_orig_fpoc, noisy_orig_nfpc, noisy_orig_vol, 
                          noise_level_stddev, angle_noise_level_stddev, weigh_by_class=False, within_floorplan=False, no_penetration=False, max_try=None, pen_siz_scale=0.92):
         """ noisy_orig_pos/ang/sha: [batch_size, maxnobj, pos_dim/ang_dim/sha_dim]
             noisy_orig_fpoc:        [batch_size, maxnfpoc, pos_dim]
@@ -239,7 +261,7 @@ class TDSGFront():
                     new_o_ang = np_rotate(noisy_orig_ang[scene_i, obj_i:obj_i+1, :], obj_angle_noise) # [1, ang_dim=2]
 
                     if within_floorplan or no_penetration: # if can skip, will always break
-                        if not self.is_valid( obj_i, np.copy(new_o_pos), np.copy(new_o_ang),
+                        if not self.is_valid(scenepaths[scene_i], obj_i, np.copy(new_o_pos), np.copy(new_o_ang),
                                             np.copy(noisy_pos[scene_i, :noisy_orig_nobj[scene_i], :]), np.copy(noisy_ang[scene_i, :noisy_orig_nobj[scene_i], :]),  # latest state
                                             np.copy(noisy_orig_sha[scene_i, :noisy_orig_nobj[scene_i], :]), np.copy(noisy_orig_fpoc[scene_i, :noisy_orig_nfpc[scene_i], :]), 
                                             within_floorplan=within_floorplan, no_penetration=no_penetration, pen_siz_scale=pen_siz_scale):
@@ -253,7 +275,7 @@ class TDSGFront():
                     break # continue to next object
         return noisy_pos, noisy_ang
     
-    def is_valid(self, o_i, o_pos, o_ang, scene_pos, scene_ang, scene_sha, scene_fpoc, within_floorplan=True, no_penetration=True, pen_siz_scale=0.92):
+    def is_valid(self, scenepath, o_i, o_pos, o_ang, scene_pos, scene_ang, scene_sha, scene_fpoc, within_floorplan=True, no_penetration=True, pen_siz_scale=0.92):
         """ A object's pos + ang is valid if the object's bounding box does not intersect with any floor plan wall or other object's bounding box edge.
             Note this function modifies the input arguments in place.
 
@@ -263,8 +285,13 @@ class TDSGFront():
             scene_fpoc: [nfpoc, pos_dim], without padding, ordered (consecutive points form lines).
             pen_siz_scale: to allow for some minor intersection (respecting ground truth dataset)
         """
+        scene_type = scenepath.split("\\")[-1].split("_")[1]
+        if "Bedroom" in scene_type: scene_type = "bedroom"
+        elif "LivingRoom" in scene_type: scene_type = "livingroom"
+        elif "DiningRoom" in scene_type: scene_type = "diningroom"
+        elif "Library" in scene_type: scene_type = "library"
         # Dnormalize data to the same scale: [-3, 3] (meters) for both x and y(z) axes.
-        room_size = np.array(self.room_size) #[x, y, z]
+        room_size = np.array(self.room_size[scene_type]) #[x, y, z]
         o_pos = o_pos*room_size[[0,2]]/2  #[1, dim]
         scene_fpoc = scene_fpoc* room_size[[0,2]]/2 # from [-1,1] to [-3,3]
         scene_pos = scene_pos*room_size[[0,2]]/2 # [nobj, pos_dim]
@@ -412,9 +439,19 @@ class TDSGFront():
 
         batch_scenepaths = []  
         for data_i in range(batch_size): 
-            s = data['scenedirs'][random_idx[data_i]] # a6704fd9-02c2-42a6-875c-723b26a8048a_MasterBedroom-45545
-            batch_scenepaths.append(os.path.join(self.scene_dir, s))
+            s = data['scenedirs'][random_idx[data_i]] # a6704fd9-02c2-42a6-875c-723b26a8048a_MasterBedroom-45545                
+            if "Bedroom" in s: scene_path = "bedroom"
+            elif "LivingRoom" in s: scene_path = "livingroom"
+            elif "DiningRoom" in s: scene_path = "diningroom"
+            elif "Library" in s: scene_path = "library"
+            scene_path = f"processed_{scene_path}_augmented" if self.use_augment else f"processed_{scene_path}"
+            batch_scenepaths.append(os.path.join(TDF_DATA_DIR, scene_path, s))
         batch_scenepaths = np.array(batch_scenepaths) # [] # numpy array of strings
+
+        print("CATEGORIES PRELOAD")
+        for scene, cla in zip(batch_scenepaths, data['cla'][random_idx]):
+            print(scene)
+            print(cla)
 
         batch_nbj = data['nbj'][random_idx] # [] -> (batch_size,)
 
@@ -495,7 +532,7 @@ class TDSGFront():
         if replica=="room_0": clean_scenepaths, clean_nobj, clean_pos, clean_ang, clean_sha, clean_vol, clean_fpoc, clean_nfpc, clean_fpmask, clean_fpbpn = gen_room0(batch_size)
         
         # input: pos, ang, siz, cla
-        perturbed_pos, perturbed_ang = self.clever_add_noise( clean_pos, clean_ang, clean_sha, clean_nobj, clean_fpoc, clean_nfpc, clean_vol, noise_level_stddev, angle_noise_level_stddev,
+        perturbed_pos, perturbed_ang = self.clever_add_noise(clean_scenepaths, clean_pos, clean_ang, clean_sha, clean_nobj, clean_fpoc, clean_nfpc, clean_vol, noise_level_stddev, angle_noise_level_stddev,
                                                               weigh_by_class=weigh_by_class, within_floorplan=within_floorplan, no_penetration=no_penetration, pen_siz_scale=pen_siz_scale)
 
         input = np.concatenate([perturbed_pos, perturbed_ang, clean_sha], axis=2) # [batch_size, maxnumobj, dims]
@@ -609,10 +646,25 @@ class TDSGFront():
             Returns:
             input: [nobj, pos_d+ang_d+siz_d+cla_d]
         """
-        scenepath = random.choice(self.scenes_test) if scenepath is None else os.path.join(self.scene_dir, scenepath)
-        # print("\n", scenepath)
+        if scenepath is None:
+            scenepath = random.choice(self.scenes_test)
+        else:
+            if "Bedroom" in scenepath: 
+                folder_path = "bedroom"
+                mapping = bedroom_idx
+            elif "LivingRoom" in scenepath: 
+                folder_path = "livingroom"
+                mapping = livingroom_idx
+            elif "DiningRoom" in scenepath: 
+                folder_path = "diningroom"
+                mapping = livingroom_idx
+            elif "Library" in scenepath: 
+                folder_path = "library"
+                mapping = library_idx
+            full_folder_path = f"processed_{folder_path}_augmented" if self.use_augment else f"processed_{folder_path}"
+            scenepath = os.path.join(TDF_DATA_DIR, full_folder_path, scenepath)
+        
         scene_data = np.load(os.path.join(scenepath, "boxes.npz"), allow_pickle=True)
-
         nobj = scene_data['jids'].shape[0]
         
         scene_pos = np.zeros((nobj, self.pos_dim))
@@ -623,8 +675,8 @@ class TDSGFront():
         scene_pos[:,0] = scene_data['translations'][:,0] # [-3, 3]
         scene_pos[:,1] = scene_data['translations'][:,2]
         if normalize: 
-            scene_pos[:,0] /= (self.room_size[0]/2) # [-1,1]
-            scene_pos[:,1] /= (self.room_size[2]/2) # [-1,1]
+            scene_pos[:,0] /= (self.room_size[folder_path][0]/2) # [-1,1]
+            scene_pos[:,1] /= (self.room_size[folder_path][2]/2) # [-1,1]
             
         scene_ang[:,0:1] = np.cos(scene_data['angles']*-1) # since pos z (out of screen) -> neg y (vertical flip)
         scene_ang[:,1:2] = np.sin(scene_data['angles']*-1)
@@ -632,10 +684,19 @@ class TDSGFront():
         scene_siz[:,0] = scene_data['sizes'][:,0]*2 # [0,3]*2 original: half of bounding box length
         scene_siz[:,1] = scene_data['sizes'][:,2]*2
         if normalize: 
-            scene_siz[:,0] = scene_siz[:,0]/(self.room_size[0]/2)-1 # [-1,1]
-            scene_siz[:,1] = scene_siz[:,1]/(self.room_size[2]/2)-1
+            scene_siz[:,0] = scene_siz[:,0]/(self.room_size[folder_path][0]/2)-1 # [-1,1]
+            scene_siz[:,1] = scene_siz[:,1]/(self.room_size[folder_path][2]/2)-1
 
-        scene_cla = scene_data['class_labels'][:,:self.cla_dim] # subsequent columns are 0
+        # CREATE CLASS LABEL MAPPINGS TO SUPER CATEGORIES
+        scene_cla_old = scene_data['class_labels'] # subsequent columns are 0
+        scene_cla_old_idx = np.argmax(scene_cla_old, axis=1) # [nobj,]
+        scene_cla_old = [mapping[i] for i in scene_cla_old_idx] # [nobj,]
+        scene_cla_new = [cla2sup_cat[i] for i in scene_cla_old] # [nobj,]
+        scene_cla_new_idx = [sup_cat2idx[i] for i in scene_cla_new] # [nobj,]
+        scene_cla[np.arange(nobj), scene_cla_new_idx] = 1 # [nobj, cla_dim]
+
+        print("CLASS LABELS")
+        print(scene_cla)
 
         input = np.concatenate([scene_pos, scene_ang, scene_siz, scene_cla], axis=1)
 
@@ -651,14 +712,19 @@ class TDSGFront():
         """
         P, A, S = self.pos_dim, self.ang_dim, self.siz_dim
         nobj, cla_idx = TDSGFront.parse_cla(traj[0,:,P+A+S:]) # uses initial cla for all snapshot in traj (generated input, never perturbed)
-        
+        scene_type = scenepath.split("\\")[-1].split("_")[1] # "bedroom", "livingroom", "diningroom", "library"
+        if "Bedroom" in scene_type: scene_type = "bedroom"
+        elif "LivingRoom" in scene_type: scene_type = "livingroom"
+        elif "DiningRoom" in scene_type: scene_type = "diningroom"
+        elif "Library" in scene_type: scene_type = "library"
+        print("Scenepath: ", scenepath)
+        print("Number of objects: ", nobj)
         if not vis_traj: traj = traj[-2:-1] # only visualize final
-
         # back to original scale in boxes.npz (absolute scale in 6x6m)
-        traj[:,:nobj,0:1] *= (self.room_size[0]/2) # [-1,1] -> [-3,3] (okay to modify in place)
-        traj[:,:nobj,1:2] *= (self.room_size[2]/2) # [-1,1] -> [-3,3] # use z as y
-        traj[:, :nobj, P+A:P+A+1] = (traj[:, :nobj, P+A:P+A+1]+1)*(self.room_size[0]/2) #[-1,1] -> [0,2] -> [0,6] (full bbox len)
-        traj[:, :nobj, P+A+1:P+A+2] = (traj[:, :nobj, P+A+1:P+A+2]+1)*(self.room_size[2]/2) #[-1,1] -> [0,2] -> [0,6] (full bbox len) # use z as y
+        traj[:,:nobj,0:1] *= (self.room_size[scene_type][0]/2) # [-1,1] -> [-3,3] (okay to modify in place)
+        traj[:,:nobj,1:2] *= (self.room_size[scene_type][2]/2) # [-1,1] -> [-3,3] # use z as y
+        traj[:, :nobj, P+A:P+A+1] = (traj[:, :nobj, P+A:P+A+1]+1)*(self.room_size[scene_type][0]/2) #[-1,1] -> [0,2] -> [0,6] (full bbox len)
+        traj[:, :nobj, P+A+1:P+A+2] = (traj[:, :nobj, P+A+1:P+A+2]+1)*(self.room_size[scene_type][2]/2) #[-1,1] -> [0,2] -> [0,6] (full bbox len) # use z as y
 
         t=traj if vis_traj else None
 
@@ -695,7 +761,7 @@ class TDSGFront():
                                     transform = mt.Affine2D().rotate_around(scene[o_i,0], scene[o_i,1], np.arctan2(scene[o_i,3], scene[o_i,2])) +plt.gca().transData 
                                 ))
         
-        R = (room_info["room_size"][self.room_type][0]/2)
+        R = (room_info["room_size"]["livingroom"][0]/2)
         rang = [-R, R] #[-3,3] for bedroom
 
         # floor plan related

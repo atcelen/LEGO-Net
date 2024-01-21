@@ -77,7 +77,6 @@ def preprocess(data):
     for i in tqdm(range(len(data["scenedirs"]))):
         scene_id = data["scenedirs"][i]
         scene_id = scene_id.split("_")[1]
-        
         found_items = [item for item in all_scans if item["scan"] == scene_id]
         if found_items == []:
             print(scene_id)
@@ -90,11 +89,12 @@ def preprocess(data):
             break
         else:
             found_dict = deepcopy(found_items[0])
-            # sg_scene_objs = list(found_dict["objects"].values())
-            # sg_scene_objs = [item for item in sg_scene_objs if item not in ["floor", "ceiling_lamp", "pendant_lamp"]]
-            # row_, col_ = np.nonzero(data["cla"][i])
-            # atiss_objs = list(np.array(category_mapping)[col_])
-            # atiss_objs = [item for item in atiss_objs if item not in ["ceiling_lamp", "pendant_lamp"]]
+            sg_scene_objs = list(found_dict["objects"].values())
+            sg_scene_objs = [item for item in sg_scene_objs if item not in ["floor", "ceiling_lamp", "pendant_lamp"]]
+            row_, col_ = np.nonzero(data["cla"][i])
+            atiss_objs = list(np.array(category_mapping)[col_])
+            
+            atiss_objs = [item for item in atiss_objs if item not in ["ceiling_lamp", "pendant_lamp"]]
             # if sg_scene_objs != atiss_objs:
                 # print(scene_id)
                 # print("3D-Front from the download link")
@@ -130,10 +130,10 @@ def preprocess(data):
                 edge_one_hot[idx, item[1] - 1 + 2 * N_NODE_TYPES] = 1
             data["sg"].append(edge_one_hot.tolist())
             # Change the class to super-category
-            # for new_cl, atiss_obj_row in zip(new_classes_array[i], map(cla2sup_cat.get, atiss_objs)):
-            #     new_cl[sup_cat2idx[atiss_obj_row]] = 1
+            for new_cl, atiss_obj_row in zip(new_classes_array[i], map(cla2sup_cat.get, atiss_objs)):
+                new_cl[sup_cat2idx[atiss_obj_row]] = 1
 
-    # data["cla"] = new_classes_array
+    data["cla"] = new_classes_array
     data["sg"] = np.array(data["sg"])
     return data
 

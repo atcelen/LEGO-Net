@@ -301,10 +301,13 @@ def denoise_batch(de_input, args, savedir="", fpprefix="", numscene=10, startidx
         bpn=fpbpn[scene_idx:scene_idx+1] if fpbpn is not None else None
         sg_info_ins = SG_info[scene_idx:scene_idx+1] if SG_info is not None else None
 
+
         traj, break_idx, pos_disp_size, ang_disp_pi_size, perobj_distmoved = denoise_1scene(de_input[scene_idx:scene_idx+1], args,data_type, method,
                                                                             savedir, f"{startidx+scene_idx}_{fpprefix}-{method}", f"{startidx+scene_idx} {fpprefix} ({method})", 
                                                                             device, to_vis, scenepath=sp, padding_mask=pm, fpoc=oc, nfpc=nc, fpmask=m, fpbpn=bpn, steer_away=steer_away, SG_info = sg_info_ins)
-        trajs.append(traj) # append [niter, nobj, pos+ang+siz+cla] # traj[0] is initial, traj[-1] is final
+        print("Traj Shape: ", traj.shape)
+        print("Perobj Shape: ", perobj_distmoved.shape)
+        trajs.append(traj[[0, -1]]) # append [niter, nobj, pos+ang+siz+cla] # traj[0] is initial, traj[-1] is final
         perobj_distmoveds.append(perobj_distmoved) # append a scalar -> [nscene,]
 
         scenename = sp.split("/")[-1] if sp else ""
@@ -362,7 +365,7 @@ def denoise_meta(args, models, model_names, numscene=10, startidx=0, use_methods
                                                                                                                         noise_level_stddev=nl, angle_noise_level_stddev=anl,
                                                                                                                         weigh_by_class = args['denoise_weigh_by_class'], within_floorplan = args['denoise_within_floorplan'], no_penetration = args['denoise_no_penetration'], 
                                                                                                                         pen_siz_scale=pen_siz_scale, replica=args["replica"],
-                                                                                                                        use_SG=args['use_SG'])
+                                                                                                                        )
 
             de_padding_mask = torch.tensor(de_padding_mask).to(device) # boolean
             if args["use_floorplan"]: # models below may have any variation of encoder regardless of floorplan_encoder_type in args
@@ -387,10 +390,11 @@ def denoise_meta(args, models, model_names, numscene=10, startidx=0, use_methods
                 initials.append(scene[0])# [nscene, numobj, pos+ang+siz+cla]
                 
                 if args["replica"]!="room_0":  # normal
+                    print("Original Path: ", os.path.split(de_scenepaths[scene_idx])[1])
                     read_original, _ = tdf.read_one_scene(os.path.split(de_scenepaths[scene_idx])[1], normalize=False) # [numobj, pos_d+ang_d+siz+cla] 
                     tdf.visualize_tdf_2d(read_original, os.path.join(savedir, f"{startidx+scene_idx}_groundtruth"), f"{startidx+scene_idx}: ground truth",
                                         args=args, traj=None, nobj=None, cla_idx=None, scenepath=de_scenepaths[scene_idx])
-                    
+
                     read_original_normalized, _ = tdf.read_one_scene(os.path.split(de_scenepaths[scene_idx])[1], normalize=True) # [numobj, pos_d+ang_d+siz+cla] 
                     groundtruths.append(read_original_normalized)# [nscene, numobj, pos+ang+siz+cla]
                  
@@ -400,12 +404,12 @@ def denoise_meta(args, models, model_names, numscene=10, startidx=0, use_methods
         if save_results:
             saveres_fp = os.path.join(args['logsavedir'], f"pos{round(noise_levels[noise_i], 4)}_ang{round(angle_noise_levels[noise_i]/np.pi*180, 2)}_initial_groundtruth")
             if args['random_mass_denoising']: saveres_fp = os.path.join(args["logsavedir"], current_dir, f"pos{round(noise_levels[noise_i], 4)}_ang{round(angle_noise_levels[noise_i]/np.pi*180, 2)}_initial_groundtruth")
-            np.savez_compressed( saveres_fp,  
-                random_idx = random_idx,
-                scenepaths = np.array(de_scenepaths),
-                initial = np.array(initials), # in [-1,1]
-                groundtruth = np.array(groundtruths) # read one scene has normalize default to false, in [-1,1]
-            )
+            # np.savez_compressed( saveres_fp,  
+            #     random_idx = random_idx,
+            #     scenepaths = np.array(de_scenepaths),
+            #     initial = np.array(initials), # in [-1,1]
+            #     groundtruth = np.array(groundtruths) # read one scene has normalize default to false, in [-1,1]
+            # )
             log(f"\nDenoising results saved to {saveres_fp}\n")
 
         # denoising
@@ -700,7 +704,8 @@ if __name__ == "__main__":
             modelconfigs = {  
                 "modelpaths": ["log1105_livingroom/1105_122803_409_FFF_livonly0_aug1_MSE+L1_pointnet_simple/50000iter.pt", 
                                 "log1105_livingroom/1105_122803_409_FFF_livonly0_aug1_MSE+L1_pointnet_simple/50000iter.pt"],
-                "model_names": ["liv0.1-with_steer", "liv0.1-without_steer" ]
+                "model_names": ["liv0.1-with_steer", "liv0.1-without_steer" ],
+                "use_SG": args['use_SG']
             } # only labels change for abs vs rel -> no impact
             log(f"\nmodelconfigs: {modelconfigs}")
 
@@ -715,7 +720,7 @@ if __name__ == "__main__":
         else:
             model=load_checkpoint(model, args['model_path'])  # updates model, optimizer, start_epoch
             models = [model]
-            model_epoch = args['train_epoch'] if args['train'] else args['model_path'].split("/")[-1][:-7]
+            model_epoch = args['train_epoch'] if args['train'] else args['model_path'].split("\\")[-1][:-7] # Change split to '/' for linux
             model_names = [f"train{model_epoch}"]
 
         
