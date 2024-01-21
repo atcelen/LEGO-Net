@@ -15,5 +15,5 @@ home_dir  = "/cluster/home/guohan/Project"
 # data_dir = os.path.join(home_dir, "3DFRONT_65347")
 
 
-# ### Evaluation files/output directory
-# eval_dir = os.path.join(home_dir, "LEGO-Net", "eval")
+### Evaluation files/output directory
+eval_dir = os.path.join(home_dir, "LEGO-Net", "eval")

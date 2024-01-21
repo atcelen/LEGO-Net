@@ -3,7 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
 
-TDF_DATA_DIR = r"D:\Datasets\processed-bedroom-diningroom-library-livingroom"
+TDF_DATA_DIR = r"D:\Datasets\processed-tdf"
 SGF_DATA_DIR = r"D:\Datasets\SG_FRONT"
 
 bedroom_idx = ["armchair", "bookshelf", "cabinet", "ceiling_lamp", "chair", "children_cabinet", "coffee_table", "desk", "double_bed", "dressing_chair", "dressing_table", "kids_bed", "nightstand", "pendant_lamp", "shelf", "single_bed", "sofa", "stool", "table", "tv_stand", "wardrobe", "start", "end"]

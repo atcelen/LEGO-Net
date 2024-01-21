@@ -12,7 +12,7 @@ from data.distance import *
 
 from data.filepath import *
 
-TDF_DATA_DIR = r"D:\Datasets\processed-bedroom-diningroom-library-livingroom"
+TDF_DATA_DIR = r"D:\Datasets\processed-tdf"
 SGF_DATA_DIR = r"D:\Datasets\SG_FRONT"
 
 room_info = {
@@ -86,7 +86,6 @@ class TDSGFront():
                                 for e in list(os.listdir(self.scene_dir)) 
                                 if e.split("_")[1] in split2room["test"]]
             self.scenes_test = sorted(self.scenes_test)
-        
             # preload data into RAM
             if os.path.exists(os.path.join(self.scene_dir, "data_tv_ctr.npz")):
                 new_tv = np.load( os.path.join(self.scene_dir, "data_tv_ctr.npz"), allow_pickle=True)
@@ -94,6 +93,8 @@ class TDSGFront():
                     self.data_tv = dict(new_tv)
                 else:
                     for key in set(self.data_tv) | set(new_tv):
+                        print(key)
+                        print(self.data_tv[key].shape, new_tv[key].shape)
                         self.data_tv[key] = np.concatenate((self.data_tv[key], new_tv[key]), axis=0)
                 # KEYS : ['scenedirs', 'nbj', 'pos', 'ang', 'siz', 'cla', 'vol', 'fpoc', 'nfpc', 'ctr', 'fpbpn']
             if os.path.exists(os.path.join(self.scene_dir, "data_test_ctr.npz")):
